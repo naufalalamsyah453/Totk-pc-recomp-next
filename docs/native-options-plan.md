@@ -30,10 +30,10 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 0.1 | Create GitHub repo `Totk-pc-recomp-next` from upstream | done |
 | 0.2 | Clone to `C:\Users\tb\projects\Totk-pc-recomp-next` | done |
 | 0.3 | Write this plan | done |
-| 0.4 | CI workflow: content guard + tests that need no game files | pending |
-| 0.5 | Release workflow: automatic Windows release on `v*` | pending |
-| 0.6 | Push plan + workflows, verify CI green | pending |
-| 0.7 | Clean old account repos (`naufalalamsyah453/totk-pc-recomp`) | pending |
+| 0.4 | CI workflow: content guard + tests that need no game files | done |
+| 0.5 | Release workflow: automatic Windows release on `v*` | done |
+| 0.6 | Push plan + workflows, verify CI green | done |
+| 0.7 | Clean old account repos (`naufalalamsyah453/totk-pc-recomp`) | done (404, gone) |
 | 1.1 | RE: find TotK 1.4.3 Options screen + option table | pending |
 | 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | pending |
 | 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | pending |
@@ -43,8 +43,8 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | pending |
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
 | 6.1 | Port hooks to 1.2.1 (optional, after 1.4.3 works) | pending |
-| 7.1 | Green CI on main | pending |
-| 7.2 | First automatic Windows release tag | pending |
+| 7.1 | Green CI on main | done (run 42120809154) |
+| 7.2 | First automatic Windows release tag | pending (needs `GAME_INPUTS_URL` secret) |
 
 ## Background
 
@@ -106,9 +106,9 @@ File: `Revivedx/SavageWindRecomp` → `runtime/ui/game_options.mm`, hooks from `
 | Job | Runner | What |
 |---|---|---|
 | content-guard | ubuntu | `python tools/check_content.py` (same as upstream) |
-| unit-no-game | ubuntu | `installer_test.py`, `pack_shader_cache_test.py`, `spin_waits_test.py`, `worktree_test.py` (stdlib / no game) |
-| unit-py314 | ubuntu | `ncz_test.py`, `romfs_prompts_test.py` (Python 3.14 + pinned reqs) |
-| unit-windows | windows | `flags_check.py`, `excl_mt.py` (MSYS2 clang; expands later) |
+| unit-no-game | ubuntu | `pack_shader_cache_test.py`, `spin_waits_test.py`, `worktree_test.py` (stdlib / no game; `capstone`, `lz4`) |
+| unit-py314 | ubuntu | `installer_test.py`, `ncz_test.py`, `romfs_prompts_test.py` (Python 3.14 + pinned reqs) |
+| unit-windows | windows | `flags_check.py`, `excl_mt.py` (MSYS2 clang; `capstone`, `unicorn`; expands later) |
 
 Not in CI (need game files or huge toolchains): `jumptables_check.py`, `diff/lift.py`, `diff/func.py`,
 `installer_e2e.py`, full `make_release.py --prove`. Track them in Status when a private runner exists.
@@ -258,10 +258,10 @@ Repeat Phase 1 address map for 1.2.1 then 1.1.0; add `patches-v121` / `v110` sit
 
 Update this subsection after each infrastructure step.
 
-- [ ] Workflows committed and pushed
-- [ ] First CI run green on `main`
-- [ ] Release workflow present (may fail closed until `GAME_INPUTS_URL` is set)
-- [ ] Old `naufalalamsyah453/totk-pc-recomp` confirmed gone / cleaned
+- [x] Workflows committed and pushed
+- [x] First CI run green on `main` (run 42120809154, commit `56e3e06`; fixes landed in `c9a8082`, `6baf44a`, `56e3e06`: ignore-list, `is_link` assert for POSIX symlinks, gitignore patterns without trailing slash, `capstone`/`unicorn` in unit-windows, ABA expectations aligned with the compare-and-swap monitor in `runtime/cpu.h`)
+- [x] Release workflow present (may fail closed until `GAME_INPUTS_URL` is set)
+- [x] Old `naufalalamsyah453/totk-pc-recomp` confirmed gone / cleaned (404)
 - [ ] First `v*` tag after secrets → Windows zip on Releases
 
 ## References
