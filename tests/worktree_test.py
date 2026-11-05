@@ -18,7 +18,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 import worktree  # noqa: E402
 
-IGNORED = '\n'.join(['/' + d + '/' for d in worktree.LINK_DIRS] + ['/' + f for f in worktree.LINK_FILES] + ['/.worktrees/']) + '\n'
+# No trailing slash on the directory patterns: a linked directory is a junction on Windows but a symlink on
+# POSIX, git sees a symlink as a file entry, and a trailing-slash pattern matches directories only.
+IGNORED = '\n'.join(['/' + d for d in worktree.LINK_DIRS] + ['/' + f for f in worktree.LINK_FILES] + ['/.worktrees']) + '\n'
 
 
 def git(cwd, *a):

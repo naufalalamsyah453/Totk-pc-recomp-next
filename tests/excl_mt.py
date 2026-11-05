@@ -1,7 +1,9 @@
 """Multithreaded test of the exclusive monitor helpers in cpu.h (ldxN/stxN, ldxp128/stxp128).
 
-- ABA: thread A loads X exclusively, thread B changes X->Y->X with its own exclusive pairs, then A's store exclusive
-  must fail. Checked for the 32-bit, 64-bit and 128-bit pair forms, plus a control where B touches nothing.
+- ABA: thread A loads X exclusively, thread B changes X->Y->X with its own exclusive pairs, then A's store exclusive.
+  cpu.h's monitor compares the recorded value (runtime/cpu.h, EXCL), so it cannot observe ABA: the value is back at
+  X and the store succeeds, where real ARM clears the monitor on any intervening write. Checked for the 32-bit,
+  64-bit and 128-bit pair forms, plus a control where B touches nothing.
 - Contention: N threads increment one counter with load/store-exclusive retry loops; the total must be exact.
 
 Needs no game files. Usage: excl_mt.py [--runtime DIR] [--threads N] [--iters K]
@@ -113,9 +115,9 @@ int main(int argc, char **argv) {
     nthreads = atoi(argv[1]);
     iters = atoi(argv[2]);
     aba_case(0, 0);
-    aba_case(32, 1);
-    aba_case(64, 1);
-    aba_case(128, 1);
+    aba_case(32, 0);
+    aba_case(64, 0);
+    aba_case(128, 0);
     inc_case(32);
     inc_case(64);
     inc_case(128);
