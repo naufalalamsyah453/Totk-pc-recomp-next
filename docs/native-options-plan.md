@@ -34,8 +34,8 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 0.5 | Release workflow: automatic Windows release on `v*` | done |
 | 0.6 | Push plan + workflows, verify CI green | done |
 | 0.7 | Clean old account repos (`naufalalamsyah453/totk-pc-recomp`) | done (404, gone) |
-| 1.1 | RE: find TotK 1.4.3 Options screen + option table | pending |
-| 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | pending |
+| 1.1 | RE: find TotK 1.4.3 Options screen + option table | in progress — mapped, see "Phase 1 findings" |
+| 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | in progress — build/msg/decide mapped; reset + input entry pending |
 | 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | pending |
 | 3.1 | Runtime: `runtime/ui/game_options.c` (pages, items, cfg bridge) | pending |
 | 3.2 | UTF-16 message injection + `ui_text.c` coverage | pending |
@@ -170,6 +170,72 @@ Find and record:
 
 Tooling: whatever RE you use (Ghidra/IDA/binary ninja) on a **local dump the user already owns**; outputs are
 addresses and notes only — never pasted game code into the repo.
+
+#### Phase 1 findings — 1.4.3 address map (interim)
+
+Method: lifted C of `main` (local `generated/v143`, never committed); guest VA = `main+0x…` (image base 0).
+String refs resolved from ADRP+ADD pairs; roles below are interpretations pending call-site confirmation.
+
+**Screen class (`UISystemOptionScreen`)**
+
+| What | Address |
+|---|---|
+| class name string | `main+0x2c58d59` |
+| factory (malloc 0x220 → ctor) | `main+0x218d58c` |
+| ctor (vptr stored at obj+0) | `main+0x218b9a0` |
+| dtor / deleting dtor | `main+0x218ba60` / `main+0x218baec` |
+| vtable (~101 slots) | `main+0x3732970` |
+| slot99 `getName` / slot100 `create` | `main+0x218d580` / `main+0x218d58c` |
+| slot49 row decide/focus handler | `main+0x218d274` |
+| row refresh loop (switch on kind 0/1/2) | `main+0x218d3e0` |
+| row widget setup loop | `main+0x218c114` |
+| row text call sites (loops) | `main_0297.c` L9131/L9150, L10166/L10175 |
+| pause-menu Options button | `main+0x218bb10` |
+| `IsTitleMenu` inline string (after vtable) | `main+0x3732c98` |
+
+Screen object (size 0x220, interim): `+0x1a8` kind-2 list; `+0x1b0/+0x1b8` row array A count/ptr (kind 0);
+`+0x1c0/+0x1c8` row array B count/ptr (kind 1); `+0x1e0/+0x1e8` entry list count/ptr (stride 8:
+`{u32 kind, u32 row}`); `+0x210` state/result code (init 0xffffffff).
+
+**Option table (`game__ui__OptionSetTable`)**
+
+| What | Address |
+|---|---|
+| type-name getters OptionSet / OptionSetTable | `main+0x20883a4` / `main+0x2089488` (strings `main+0x2c89a13`, `main+0x2cdcf87`) |
+| bgyml path `UI/OptionSetTable/OptionSetTable…bgyml` | string `main+0x2c15d31`, data ptr `main+0x3719430` |
+| table loader (stride 0x28, reads obj+0x150) | `main+0x9ea500` (caller `main_0114.c` L21180) |
+| count / entry(i) / entry-by-(id,value) | `main+0x2089c14` / `main+0x2089cb4` / `main+0x2089d90` |
+| find-by-name + name resolve | `main+0x20883e8`, `main+0x20885f4`, `main+0x7d4310` |
+| option-id string tables | `main+0x3718e48` (`UseAmiibo`), `main+0x3714de0` (`EnableWarpLargeDungeonWind`) |
+| table singleton (ptr at +0x5e8) | `main+0x3a82e70` |
+
+Entry (interim): `+0x4` kind (0/1/2), `+0x10` choice count, `+0x24` id.
+
+**Row build / msg / decide (main_0293.c + main_0297.c)**
+
+| fn | main+ | role |
+|---|---|---|
+| `f_700212b9d8` | `+0x212b9d8` | kind-2 row text, key `1000_%02d` |
+| `f_700212bf04` | `+0x212bf04` | kind-1 label, key `10%02d` + `T_Option_00` |
+| `f_700212c0e8` | `+0x212c0e8` | value text, key `10%02d_%02d` |
+| `f_700212c6ac` | `+0x212c6ac` | kind-0 row updater |
+| `f_700212bdd0` | `+0x212bdd0` | row setup: `On`, `Decide`, `Pa_ArrowR_00`, `Pa_ArrowL_00` |
+| `f_700212c1e0` | `+0x212c1e0` | kind-1 decide: value = (i+1) mod entry+0x10, write, refresh |
+| `f_700212c3e0` | `+0x212c3e0` | sibling store path (role unverified) |
+| `f_700212acd0` | `+0x212acd0` | Controls tab keys (`BasicControls`, …) |
+| `f_7000170210` | `+0x170210` | settings write (dataObj, name, valueBuf, …) |
+
+Message sheet `LayoutMsg/SystemOption_00` = string `main+0x2c58b8e`; row keys are built with
+`%02d` patterns and resolved through the game msg lookup (details pending).
+
+**Value model (interim)**: gameplay reads options by field-name lookup on reflection tables
+(e.g. `main+0x2069740` for `EnableWarpLargeDungeonWind`); the screen writes through
+`main+0x170210`. Kind-1 row object: `+0x30/+0x38` store objects, `+0x48` row id, `+0x4c` value index
+(u32, wraps mod count), `+0x54` value arg.
+
+**Open questions (next)**: input entry that feeds left/right/A into `main+0x218d274`; reset-to-defaults
+function; kind-0 apply (`main+0x212c818`) and kind-2 path (`main+0x212bcd8`); msg id → sheet resolution;
+table load order vs bgyml.
 
 ### Phase 2 — Generator host-call hooks
 
