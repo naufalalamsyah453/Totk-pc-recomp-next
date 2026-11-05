@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  content-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Refuse game content, keys, generated game code
+        run: python tools/check_content.py
+
+  unit-no-game:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies only
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install capstone lz4
+      - name: Shader cache packer
+        run: python tests/pack_shader_cache_test.py
+      - name: Spin-wait finder
+        run: python tests/spin_waits_test.py
+      - name: Worktree junctions
+        run: python tests/worktree_test.py
+
+  unit-py314:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install pinned tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r tools/requirements-py314.txt
+      - name: Installer bookkeeping (needs compression.zstd / 3.14)
+        run: python tests/installer_test.py
+      - name: NCZ unpacking on made-up files
+        run: python tests/ncz_test.py
+      - name: RomFS button prompts on a synthetic RomFS
+        run: python tests/romfs_prompts_test.py
+
+  unit-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          path-type: inherit
+          install: >-
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-make
+      - name: cpu.h flag helpers
+        shell: msys2 {0}
+        run: python tests/flags_check.py
+      - name: Exclusive monitor helpers under contention
+        shell: msys2 {0}
+        run: python tests/excl_mt.py --threads 4 --iters 2000

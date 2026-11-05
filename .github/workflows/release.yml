@@ -1,0 +1,158 @@
+name: Release (Windows)
+
+# Automatic Windows installer zip on version tags. No local builds.
+# Private game inputs (lifted generated/ and optional extracted/) come from secrets — never from this repo:
+#   GAME_INPUTS_URL    required: URL of a zip with generated/v143/** (and build/extracted/v143/** for --prove)
+#   GAME_INPUTS_TOKEN  optional Authorization header value (e.g. "Bearer …" or "token …")
+# Without GAME_INPUTS_URL the job fails closed with instructions; it never publishes a half-built installer.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      prove:
+        description: "Run make_release --prove (needs extracted game inputs in the zip)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  PY312: "3.12"
+  PY314: "3.14"
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY312 }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY314 }}
+
+      - name: Install uv
+        shell: pwsh
+        run: |
+          irm https://astral.sh/uv/install.ps1 | iex
+          uv --version
+
+      - name: Python venvs (lifter + extraction tools)
+        shell: pwsh
+        run: |
+          uv venv --python ${{ env.PY312 }} .venv
+          uv pip install --python .venv/Scripts/python.exe -r tools/requirements.txt
+          uv venv --python ${{ env.PY314 }} .venv-py314
+          uv pip install --python .venv-py314/Scripts/python.exe -r tools/requirements-py314.txt
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          path-type: inherit
+          install: >-
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-sdl3
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-libvpx
+            mingw-w64-ucrt-x86_64-zstd
+            mingw-w64-ucrt-x86_64-vulkan-devel
+            mingw-w64-ucrt-x86_64-vulkan-memory-allocator
+            mingw-w64-ucrt-x86_64-shaderc
+            mingw-w64-ucrt-x86_64-spirv-tools
+            base-devel
+            git
+            unzip
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Fetch pinned reference checkouts (shader list history)
+        shell: bash
+        run: bash tools/fetch_refs.sh
+
+      - name: Restore private game inputs (generated / extracted)
+        shell: pwsh
+        env:
+          GAME_INPUTS_URL: ${{ secrets.GAME_INPUTS_URL }}
+          GAME_INPUTS_TOKEN: ${{ secrets.GAME_INPUTS_TOKEN }}
+        run: |
+          if (-not $env:GAME_INPUTS_URL) {
+            Write-Host "::error::GAME_INPUTS_URL is not set. Seed a private zip (generated/v143 + optional build/extracted/v143) and add repository secrets GAME_INPUTS_URL / GAME_INPUTS_TOKEN. See docs/native-options-plan.md."
+            exit 1
+          }
+          $headers = @{}
+          if ($env:GAME_INPUTS_TOKEN) { $headers["Authorization"] = $env:GAME_INPUTS_TOKEN }
+          $zip = Join-Path $env:RUNNER_TEMP "game-inputs.zip"
+          Invoke-WebRequest -Uri $env:GAME_INPUTS_URL -Headers $headers -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath .
+          if (-not (Test-Path "generated/v143/layout.json")) {
+            Write-Host "::error::Game inputs zip did not contain generated/v143/layout.json"
+            exit 1
+          }
+          Write-Host "Restored generated/:"
+          Get-ChildItem generated | ForEach-Object { Write-Host "  $($_.Name)" }
+
+      - name: Build shader translator (no game bytes in repo)
+        shell: pwsh
+        run: .venv\Scripts\python tools\build_xlate.py
+
+      - name: Assemble TotK-Setup release folder + zip
+        shell: pwsh
+        env:
+          PROVE: ${{ (github.event_name == 'workflow_dispatch' && inputs.prove) || startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          $out = "build/release/TotK-Setup"
+          $zip = "build/release/TotK-Setup-${{ github.ref_name }}-windows.zip"
+          $extra = @()
+          if ($env:PROVE -eq "true" -and (Test-Path "build/extracted/v143")) {
+            $extra += "--prove"
+          } elseif ($env:PROVE -eq "true") {
+            Write-Host "::warning::prove requested but build/extracted/v143 is absent; packaging without --prove"
+          }
+          .venv-py314\Scripts\python tools\make_release.py --out $out --zip $zip @extra
+
+      - name: Content guard on checkout (post-restore sanity)
+        shell: pwsh
+        run: .venv\Scripts\python tools\check_content.py
+
+      - name: SHA256
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem build/release/*.zip | Select-Object -First 1
+          $hash = (Get-FileHash -Algorithm SHA256 $zip.FullName).Hash.ToLower()
+          "$hash  $($zip.Name)" | Set-Content -Encoding ascii build/release/SHA256SUMS.txt
+          Get-Content build/release/SHA256SUMS.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TotK-Setup-windows
+          path: |
+            build/release/*.zip
+            build/release/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/release/*.zip
+            build/release/SHA256SUMS.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
