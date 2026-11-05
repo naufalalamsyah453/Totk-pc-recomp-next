@@ -34,8 +34,8 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 0.5 | Release workflow: automatic Windows release on `v*` | done |
 | 0.6 | Push plan + workflows, verify CI green | done |
 | 0.7 | Clean old account repos (`naufalalamsyah453/totk-pc-recomp`) | done (404, gone) |
-| 1.1 | RE: find TotK 1.4.3 Options screen + option table | in progress — mapped, see "Phase 1 findings" |
-| 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | in progress — build/msg/decide mapped; reset + input entry pending |
+| 1.1 | RE: find TotK 1.4.3 Options screen + option table | done (see "Phase 1 findings") |
+| 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | done (back/close virtual + widget budget = Phase 2 verify) |
 | 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | pending |
 | 3.1 | Runtime: `runtime/ui/game_options.c` (pages, items, cfg bridge) | pending |
 | 3.2 | UTF-16 message injection + `ui_text.c` coverage | pending |
@@ -197,6 +197,27 @@ Screen object (size 0x220, interim): `+0x1a8` kind-2 list; `+0x1b0/+0x1b8` row a
 `+0x1c0/+0x1c8` row array B count/ptr (kind 1); `+0x1e0/+0x1e8` entry list count/ptr (stride 8:
 `{u32 kind, u32 row}`); `+0x210` state/result code (init 0xffffffff).
 
+**Vtable `main+0x3732970` — overridden slots (verified by scanning the vtable bytes)**
+
+| slot | main+ | function | role |
+|---|---|---|---|
+| 0 / 1 | `+0x218ba60` / `+0x218baec` | dtor / deleting dtor | |
+| 2 / 3 | `+0x218d514` / `+0x218d558` | event routing (tail to `+0x2001ad0`) | |
+| 45 (+0x168) | `+0x218d0cc` | focus/cursor → caption `+0x218c748` | onCursor |
+| 49 (+0x188) | `+0x218d274` | decide dispatcher (kind0/1/2) | onDecide |
+| 50 (+0x190) | `+0x218d3dc` | empty stub | |
+| 83 (+0x298) | `+0x218c114` | layout/widget wiring (`Pa_AppOptionBtn`, `N_SlideArea`, `Pa_ScrollBar`) | |
+| 84 (+0x2a0) | `+0x218bb10` | **build rows from OptionSetTable** (alloc entry list + row arrays by table count, widget lookup `Pa_ToggleBtn_%02d` / `Pa_SelectBtn_%02d`) | build_rows |
+| 86 / 92 | `+0x218c8ec` / `+0x218c8e8` | unknown (small) | |
+| 88 (+0x2c0) | `+0x218c5c0` | **tick/update**: row text + caption + guide refresh | tick |
+| 98 / 107 / 109 | `+0x218d55c` / `+0x218d5bc` / `+0x218d5e0` | misc virtuals | |
+| 99 (+0x318) | `+0x218d580` | `getName` → `UISystemOptionScreen` | |
+| 100 (+0x320) | `+0x218d58c` | **factory** (virtual create — no direct callers by design) | screen_open |
+
+Dirty-flag row refresh: `main+0x2001914` (eui helper, flag key `0x87ebe934`) → `main+0x218d3e0` →
+clears bit at obj+0x18. Table load: virtual `main+0x9e7890` (fn ptr at `main+0x3733da8` in a
+dispatch table) → `main+0x9ea500` (bgyml path, stride 0x28).
+
 **Option table (`game__ui__OptionSetTable`)**
 
 | What | Address |
@@ -260,11 +281,15 @@ row containers via `main+0x212c614` + `main+0x212bdd0`). Row text refresh loops:
 `+0x48` option id (copied from entry+0x0), `+0x4c` value index (u32), `+0x50` entry+0x8 (likely
 default value), `+0x54` entry+0x20 (value type, passed to read/write).
 
-**Open questions (next)**: reset-to-defaults (no dedicated function or UI string found so far —
-likely absent from the game's screen; native reset would write entry defaults, candidate +0x8);
-exact input path from eui into slot45/49; who registers the factory (no direct callers —
-name-table registration); tick/redraw site; table load order vs bgyml (loader `main+0x9ea500`
-caller in `main_0114.c` L21180).
+**Reset**: no dedicated function or UI string exists in the game's screen — the native UI implements
+reset by writing entry defaults (candidate: entry+0x8).
+
+**Remaining Phase 2 verify items**: back/close virtual (candidates among slots 86/92/98); exact eui
+input dispatcher that calls slot45/49 (framework-internal, not required if hooks sit lower);
+**widget budget** — `build_rows` looks up indexed widgets (`Pa_ToggleBtn_%02d`, `Pa_SelectBtn_%02d`)
+from the bgyml layout, so runtime rows are capped by how many instances the layout defines (count
+unknown until the SystemOption layout bgyml is extracted — single-file extraction from the base NSP,
+or probe at runtime and fail soft).
 
 ### Phase 2 — Generator host-call hooks
 
@@ -282,6 +307,26 @@ Deliverable: patches-v143.txt lines + gen/patches.py support for at least:
 
 `screen_open_request`, `screen_open`, `build_rows`, `flag_type`, `read`, `store`, `reset`, `msg_lookup`,
 `decide`, `tick`, `back` (+ title/pause tick if page-switch needs reopen).
+
+**1.4.3 hook site map (from Phase 1 findings; `main+0x…`)**
+
+| hook | site | notes |
+|---|---|---|
+| `screen_open` | factory vtable slot100 `+0x218d58c`, or layout slot83 `+0x218c114` | after ctor `+0x218b9a0` |
+| `build_rows` | vtable slot84 `+0x218bb10` | allocs entry list + row arrays from table count; widget lookup by name |
+| `flag_type` | entry layout inside `+0x218bb10` (entry+0x4 = kind 0/1/2) | |
+| `read` | generic getter `+0x980288`; row sync `+0x212bf04` | |
+| `store` | choice `+0x212c1e0` → `+0x170210`; toggle `+0x212c818` → `+0x923d20` | |
+| `reset` | none in game → runtime-owned (write entry defaults, entry+0x8 candidate) | |
+| `msg_lookup` | apply `+0xba1730`; key build `+0xf4444` / `+0xba42c0`; sheet `LayoutMsg/SystemOption_00` | |
+| `decide` | vtable slot49 `+0x218d274` | dispatches per kind |
+| `tick` | vtable slot88 `+0x218c5c0`; dirty refresh `+0x2001914` → `+0x218d3e0` | |
+| `back` | TBD (slots 86/92/98 candidates) | open-request bit +0x175 already known from `menu_cursor.c` |
+| pause/title entry | row build also reachable via `+0x218bb10`; pause screens `+0x21679ec` / `+0x216720c` | |
+
+Rows are fixed layout widgets (`Pa_ToggleBtn_%02d`, `Pa_SelectBtn_%02d`): runtime rows can only fill
+widgets the bgyml defines — verify budget (single-file bgyml extraction or runtime probe) before
+choosing inject-vs-remap strategy.
 
 ### Phase 3 — Runtime `runtime/ui/game_options.c`
 
