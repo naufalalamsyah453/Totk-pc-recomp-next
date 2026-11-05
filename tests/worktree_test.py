@@ -76,7 +76,7 @@ def main():
         assert wt.resolve() == (main_dir / '.worktrees' / 'a').resolve(), wt
         for d in worktree.LINK_DIRS:
             if (main_dir / d).is_dir():
-                assert os.path.isjunction(wt / d), d
+                assert worktree.is_link(wt / d), d
         assert (wt / 'build' / 'deep' / 'marker.txt').read_text() == 'keep'
         assert os.path.samefile(wt / 'config.local.toml', main_dir / 'config.local.toml')
         status = git(wt, 'status', '--porcelain', '--ignored=no')
