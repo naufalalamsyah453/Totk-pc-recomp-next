@@ -209,33 +209,62 @@ Screen object (size 0x220, interim): `+0x1a8` kind-2 list; `+0x1b0/+0x1b8` row a
 | option-id string tables | `main+0x3718e48` (`UseAmiibo`), `main+0x3714de0` (`EnableWarpLargeDungeonWind`) |
 | table singleton (ptr at +0x5e8) | `main+0x3a82e70` |
 
-Entry (interim): `+0x4` kind (0/1/2), `+0x10` choice count, `+0x24` id.
+Entry (interim, from row-copy and refresh code): `+0x0` option id (copied to row+0x48),
+`+0x4` kind (0/1/2), `+0x8` default candidate (→ row+0x50), `+0x10` choice count, `+0x20` value
+type (→ row+0x54).
 
 **Row build / msg / decide (main_0293.c + main_0297.c)**
 
 | fn | main+ | role |
 |---|---|---|
 | `f_700212b9d8` | `+0x212b9d8` | kind-2 row text, key `1000_%02d` |
-| `f_700212bf04` | `+0x212bf04` | kind-1 label, key `10%02d` + `T_Option_00` |
-| `f_700212c0e8` | `+0x212c0e8` | value text, key `10%02d_%02d` |
-| `f_700212c6ac` | `+0x212c6ac` | kind-0 row updater |
-| `f_700212bdd0` | `+0x212bdd0` | row setup: `On`, `Decide`, `Pa_ArrowR_00`, `Pa_ArrowL_00` |
+| `f_700212bf04` | `+0x212bf04` | kind-1 label + value sync (copies entry fields, finds value index) |
+| `f_700212c0e8` | `+0x212c0e8` | value text: key `10%02d_%02d` + `T_Text_00` |
+| `f_700212c6ac` | `+0x212c6ac` | kind-0 row label (same key scheme as kind-1) |
+| `f_700212bdd0` | `+0x212bdd0` | row widget setup: `On`, `Decide`, `Pa_ArrowR_00`, `Pa_ArrowL_00` |
 | `f_700212c1e0` | `+0x212c1e0` | kind-1 decide: value = (i+1) mod entry+0x10, write, refresh |
 | `f_700212c3e0` | `+0x212c3e0` | sibling store path (role unverified) |
 | `f_700212acd0` | `+0x212acd0` | Controls tab keys (`BasicControls`, …) |
-| `f_7000170210` | `+0x170210` | settings write (dataObj, name, valueBuf, …) |
+| `f_7000170210` | `+0x170210` | generic settings write (dataObj, name, valueBuf, …) |
+| `f_7000923d20` | `+0x923d20` | generic flag write (used by kind-0 toggle decide) |
+| `f_7000980288` | `+0x980288` | generic value read (context, nameBuf, out, type) |
+| `f_7000ba1730` | `+0xba1730` | msg apply (widget, suffix, keyObj, …) |
+| `f_70000f4444` / `f_7000ba42c0` | `+0xf4444` / `+0xba42c0` | msg key build (sprintf) / append sheet+key |
 
-Message sheet `LayoutMsg/SystemOption_00` = string `main+0x2c58b8e`; row keys are built with
-`%02d` patterns and resolved through the game msg lookup (details pending).
+**Decide / focus (vtable of the screen class)**
 
-**Value model (interim)**: gameplay reads options by field-name lookup on reflection tables
-(e.g. `main+0x2069740` for `EnableWarpLargeDungeonWind`); the screen writes through
-`main+0x170210`. Kind-1 row object: `+0x30/+0x38` store objects, `+0x48` row id, `+0x4c` value index
-(u32, wraps mod count), `+0x54` value arg.
+- slot49 `main+0x218d274` — row action dispatcher: kind0 → `main+0x212c818` (toggle write via
+  `main+0x923d20`, flag id byte at arg+0x89), kind1 → `main+0x212c1e0` (choice cycle + write via
+  `main+0x170210`), kind2 → `main+0x212bcd8` (button press); result code stored at screen+0x210.
+- slot45 `main+0x218d0cc` — focus/cursor handler: finds the focused row id, then calls caption
+  setter `main+0x218c748` (key `%04d` + `T_Caption_00`).
+- Kind semantics confirmed: **0 = toggle, 1 = choice, 2 = button** (same as BOTW reference).
+- No direct C callers for slot45/49 — they are eui virtual dispatches (input entry is inside eui).
 
-**Open questions (next)**: input entry that feeds left/right/A into `main+0x218d274`; reset-to-defaults
-function; kind-0 apply (`main+0x212c818`) and kind-2 path (`main+0x212bcd8`); msg id → sheet resolution;
-table load order vs bgyml.
+**Message scheme (sheet `LayoutMsg/SystemOption_00` = `main+0x2c58b8e`)**
+
+| purpose | key format | suffix |
+|---|---|---|
+| row title (kind1/0) | `10%02d` | `T_Option_00` (`main+0x2ca3195`) |
+| value text | `10%02d_%02d` | `T_Text_00` (`main+0x2cb3214`) |
+| focused caption | `%04d` | `T_Caption_00` (`main+0x2ced5a5`) |
+| kind-2 row | `1000_%02d` | — |
+| bottom guide | `20%02d` | `Pa_Guide_%02d/T_Guide_00`, `T_Icon_00` |
+
+**Screen init**: `main+0x218c114` + `main+0x218c2c4` (widgets `Pa_AppOptionBtn_00`,
+`Pa_AmiiboBtn_00`, `N_SlideArea_00`, `Pa_ScrollBar_00`, `IsTitleMenu` at `main+0x3732c98`;
+row containers via `main+0x212c614` + `main+0x212bdd0`). Row text refresh loops:
+`main+0x218c5c0` and `main+0x218d3e0` (the latter iterates the OptionSetTable and switches on kind).
+
+**Kind-1 row object (interim)**: `+0x20` text widget, `+0x30/+0x38` left/right arrow widgets,
+`+0x48` option id (copied from entry+0x0), `+0x4c` value index (u32), `+0x50` entry+0x8 (likely
+default value), `+0x54` entry+0x20 (value type, passed to read/write).
+
+**Open questions (next)**: reset-to-defaults (no dedicated function or UI string found so far —
+likely absent from the game's screen; native reset would write entry defaults, candidate +0x8);
+exact input path from eui into slot45/49; who registers the factory (no direct callers —
+name-table registration); tick/redraw site; table load order vs bgyml (loader `main+0x9ea500`
+caller in `main_0114.c` L21180).
 
 ### Phase 2 — Generator host-call hooks
 
