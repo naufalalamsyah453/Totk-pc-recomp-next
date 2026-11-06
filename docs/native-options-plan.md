@@ -38,7 +38,7 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | done (back/close virtual + widget budget = Phase 2 verify) |
 | 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | done (see "Phase 2"; `back` site + widget budget still open) |
 | 3.1 | Runtime: `runtime/ui/game_options.c` (items, cfg read/store bridge, table swap) | done (gated off by `NATIVE_OPTIONS`; page navigation + messages still open) |
-| 3.2 | UTF-16 message injection + `ui_text.c` coverage | partly done: key parser + text resolver landed; the `rt_opt_msg_lookup` hook still returns 0 until the `+0xba1730` call contract is read from the lifted C (rows read blank until then) |
+| 3.2 | UTF-16 message injection + `ui_text.c` coverage | partly done: key parser + text resolver landed; `+0xba1730` read (it sets a widget path, see "Message apply path"); the hook still returns 0 until `+0x610348` and the key callers are read (rows read blank until then) |
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
 | 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | pending |
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
@@ -339,6 +339,31 @@ once at install time, *before* the swap — and every page's row count is clampe
 by construction displayable, and the `cbz` fail-soft backs it up. Spare-widget headroom is a later
 optimisation once the layout is known.
 
+**Message apply path (read from the lifted C of 1.4.3; partly confirmed)**
+
+- `main+0xba1730` is **not** a key-to-text lookup. It sets one named child of a widget tree:
+  `x0` = root widget (the row), `x1` = NUL-terminated ASCII **widget path** of child names separated by `/` whose last
+  segment is the leaf pane (the `T_Option_00` / `T_Text_00` / `T_Caption_00` names of the message scheme), `x2` = an opaque
+  argument it hands on as `x3` of `main+0x610348`, `w3` bit 0 = refresh flag. It returns `w0` = success (the result of
+  `main+0x610348`, 0 when the path does not resolve).
+- Walk: for each `/` it searches the widget's child list (head at widget `+0x48`, first node `+0x50`, the child's name stored
+  inline just before its list node) for a name equal to the segment, then continues in that child (`node+0x10`). At the end of
+  the string it calls `main+0x610348(child, child+0x18, leaf, x2_arg, 0, 0xffffffff, &bool)`; when `w3` bit 0 is set and the
+  out bool is set it calls `main+0x81b55c` on the widget (and on the widget at `+0x88` when flag bit 2 of `+0x90` is set).
+- `main+0xf4444` is a printf into a small string object: `x0` = buffer `{char *data @+0 (starts at x0+0xc), u32 capacity
+  @+0x8 (0x20), inline bytes @+0xc}`, `x1` = format, `x2...` = arguments; it ends in `vsnprintf` (`main+0x2bb7c20`). The built
+  key string is therefore at `[buffer+0]`, at most 31 characters (ours are 7-10).
+- `main+0xba42c0(x0, x1, x2)` forwards to `main+0xb3e3c0(messageManager, x0, x1, x2)` where the manager is the pointer at
+  `main+0x396bcf8` (dereferenced once more); it returns 1 when that call returns 0 and logs through `main+0xa9a7bc` /
+  `main+0xc28b8c` otherwise. It is the "append sheet + key" step, not the text fetch.
+- **Still unknown** (blocks the hook): what `x2_arg` of `main+0xba1730` is (the `main+0xf4444` buffer, or an object the
+  `main+0xba42c0` / `main+0xb3e3c0` step produced from it) and which function finally turns it into the pane's text. Needs the
+  lifted C of `main+0x610348`, of `main+0xb3e3c0`, and of the callers that pass a key to `main+0xba1730`
+  (`main+0x212c6ac` kind-0 label, `main+0x212c0e8` value text, `main+0x218c748` caption setter).
+- Consequence for the hook: the three leaf names already say which text is wanted (title / value / caption), and the key
+  string in the buffer gives the option id and value id (`runtime/ui/opt_msgkey.h`). What the hook has to call to put UTF-16 into
+  the pane is the open item above, so `rt_opt_msg_lookup` still returns 0.
+
 **Remaining Phase 2 verify items**: back/close virtual (candidates among slots 86/92/98); exact eui
 input dispatcher that calls slot45/49 (framework-internal, not required if hooks sit lower).
 
@@ -452,11 +477,9 @@ file under `runtime/ui/` is picked up without generator changes.
   `OPERATION_MODE`, `AUDIO_CHANNELS`). Checked against `runtime/cfg.c`: all 14 item keys exist and every accepted
   value string matches its metas row.
 - **Messages, still open — the hook contract**: `rt_opt_msg_lookup` (`@hostif` at `main+0xba1730`) still returns 0.
-  To take the call over it must know which register holds the key string (or the `keyObj` that wraps it) and where
-  the UTF-16 result goes, and whether the title/value/caption suffixes (`T_Option_00`, `T_Text_00`, `T_Caption_00`)
-  reach this function or an inner one. Read that from the lifted C of `main+0xba1730` and its key builders
-  `main+0xf4444` / `main+0xba42c0` in the local `generated/v143`, record it under "Phase 1 findings", then fill the
-  hook body with `rt_opt_message_utf16`. Also unconfirmed: that the caption key `%04d` is built from the option id
+  The call is now understood (see "Message apply path" in Phase 1 findings): `x1` is a widget path ending in the leaf pane
+  name, `x2` an opaque key argument. Missing: the format of that argument and the function that writes text into the pane,
+  both behind `main+0x610348` / `main+0xb3e3c0`. Also unconfirmed: that the caption key `%04d` is built from the option id
   (and not the row index) — the parser accepts the bare id.
 - Still open after messages: **page navigation** (`rt_opt_decide` + a screen reopen, which would let each
   section have its own page and stop ours from displacing the game's tail rows).
