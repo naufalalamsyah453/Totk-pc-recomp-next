@@ -214,9 +214,9 @@ Screen object (size 0x220, interim): `+0x1a8` kind-2 list; `+0x1b0/+0x1b8` row a
 | 50 (+0x190) | `+0x218d3dc` | empty stub | |
 | 83 (+0x298) | `+0x218c114` | layout/widget wiring (`Pa_AppOptionBtn`, `N_SlideArea`, `Pa_ScrollBar`) | |
 | 84 (+0x2a0) | `+0x218bb10` | **build rows from OptionSetTable** (alloc entry list + row arrays by table count, widget lookup `Pa_ToggleBtn_%02d` / `Pa_SelectBtn_%02d`) | build_rows |
-| 86 / 92 | `+0x218c8ec` / `+0x218c8e8` | unknown (small) | |
-| 88 (+0x2c0) | `+0x218c5c0` | **tick/update**: row text + caption + guide refresh | tick |
-| 98 / 107 / 109 | `+0x218d55c` / `+0x218d5bc` / `+0x218d5e0` | misc virtuals | |
+| 86 / 92 | `+0x218c8ec` / `+0x218c8e8` | 86: focus/pointer event handler (matches the event's target widget against `[screen+0x218]`, finds its row in the lists at `+0x1b8` / `+0x1c8`, plays its sound and text refresh) - **not** a back handler; 92: empty stub (`ret`) | |
+| 88 (+0x2c0) | `+0x218c5c0` | **populate rows, once per opening** (not a per-frame tick; read from the lifted C): loops `count()` entries, skips an entry whose `+0x24` flag is set but false (`+0xb4bf84`, a game-data flag read; 0 = shown), fills each row's texts (`+0x212c6ac` kind 0, `+0x212bf04` kind 1, `+0x212b9d8` kind 2), takes the first button as the focus (`+0x218`), sets the caption (`+0x218c748`) and `+0x210 = 0xffffffff` | `rt_opt_tick` runs here, so it fires at open only |
+| 98 / 107 / 109 | `+0x218d55c` / `+0x218d5bc` / `+0x218d5e0` | destructor helpers (one tail-calls `+0xc76a3c`, the others `+0x167e20` after a base-class call): no back/close | |
 | 99 (+0x318) | `+0x218d580` | `getName` → `UISystemOptionScreen` | |
 | 100 (+0x320) | `+0x218d58c` | **factory** (virtual create — no direct callers by design) | screen_open |
 
@@ -380,7 +380,17 @@ optimisation once the layout is known.
   char16 units. It is what the game's message sheets hold and what the fallback strings' lengths (13 and 14) suggest, but
   no log line has confirmed it.
 
-**Remaining Phase 2 verify items**: back/close virtual (candidates among slots 86/92/98); exact eui
+**Read from the lifted C of the candidate virtuals** (`+0x218c8ec`, `+0x218c8e8`, `+0x218d55c`, `+0x218d5bc`,
+`+0x218d5e0`, `+0x218d274`, `+0x218c5c0`): none of slots 86, 92, 98, 107 or 109 is a back or close handler, so **the
+screen class itself does not handle B** - closing (and so a page change by close and reopen) is done by whoever owns
+the screen (the pause menu's System page, or the title menu). `+0x218d274` (decide) finds the row whose widget was
+pressed in the three lists (`+0x1a8` buttons, `+0x1b8` toggles, `+0x1c8` choices; `+0x1e8` holds `{u32 kind, u32
+index}` pairs), runs its handler and stores a result code at screen `+0x210`: the option id (`row+0x2c` toggles,
+`row+0x48` choices) or 0 for a button; `+0x210` is `0xffffffff` while nothing was decided. The pause-screen candidates
+`+0x21679ec` / `+0x216720c` are name getters of other screen classes (they return a string address), not the owner.
+
+**Remaining Phase 2 verify items**: the owner of the Options screen (the code that opens it, watches `+0x210` and the
+back press, and closes it) on the pause System page and the title menu - needed for page changes; exact eui
 input dispatcher that calls slot45/49 (framework-internal, not required if hooks sit lower).
 
 ### Phase 2 — Generator host-call hooks

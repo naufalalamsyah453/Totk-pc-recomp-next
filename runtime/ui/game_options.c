@@ -311,8 +311,9 @@ void rt_opt_screen_open(Cpu *c) {
     (void)c;
 }
 
-// Per-frame tick: nothing yet; the caption and guide refresh the original already does covers our rows too once
-// their messages resolve (Phase 3.2).
+// Row population (main+0x218c5c0, slot 88): runs once per opening, after the rows exist and before their texts are
+// filled - not once per frame, as its earlier "tick" name suggested. Nothing to do yet: the original fills our rows'
+// texts through the message hook like the game's own.
 void rt_opt_tick(Cpu *c) {
     (void)c;
 }
