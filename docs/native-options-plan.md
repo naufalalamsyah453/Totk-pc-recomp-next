@@ -46,7 +46,7 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
 | 6.1 | Port hooks to 1.2.1 (optional, after 1.4.3 works) | pending |
 | 7.1 | Green CI on main | done (run 42120809154) |
-| 7.2 | First automatic Windows release tag | workflow reworked to build without game inputs; first run pending |
+| 7.2 | First automatic Windows release tag | done - `v0.3.11-test` pre-release (workflow_dispatch, run 42207472902) and `v0.3.10-1` as Latest (tag push, run 42245255950, `TotK-Setup-v0.3.10-1-windows.zip` + `SHA256SUMS.txt`); both built without the optional `GAME_INPUTS_*` secrets |
 
 ## Background
 
@@ -570,7 +570,7 @@ Update this subsection after each infrastructure step.
 - [x] First CI run green on `main` (run 42120809154, commit `56e3e06`; fixes landed in `c9a8082`, `6baf44a`, `56e3e06`: ignore-list, `is_link` assert for POSIX symlinks, gitignore patterns without trailing slash, `capstone`/`unicorn` in unit-windows, ABA expectations aligned with the compare-and-swap monitor in `runtime/cpu.h`)
 - [x] Release workflow present (builds without game inputs; `--prove` needs `GAME_INPUTS_URL`)
 - [x] Old `naufalalamsyah453/totk-pc-recomp` confirmed gone / cleaned (404)
-- [ ] First `v*` tag after secrets → Windows zip on Releases
+- [x] First `v*` tag → Windows zip on Releases (`v0.3.11-test` pre-release, run 42207472902; then `v0.3.10-1` tagged on the wheel-scroll + restart-tag build, run 42245255950, 6m9s, zip 146 MB - built without the optional `GAME_INPUTS_*` secrets, so packaged without `--prove`)
 
 ## References
 
