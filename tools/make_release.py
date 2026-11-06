@@ -417,8 +417,9 @@ def layout_source():
             return version, gen
     sys.path.insert(0, str(ROOT / 'recomp'))
     import layout   # noqa: E402  (recomp/layout.py)
+    expected = json.loads((ROOT / 'tools' / 'data' / 'expected-v1.4.3.json').read_text())
     gen = MAIN_ROOT / 'build' / 'release-check' / 'layout-reference'
-    layout.write(layout.reference(), gen)
+    layout.write(layout.reference(set(expected['exefs_sha256'])), gen)
     print('make_release: no lifted game: the runtime library is built against the reference layout')
     return 'v143', gen
 
