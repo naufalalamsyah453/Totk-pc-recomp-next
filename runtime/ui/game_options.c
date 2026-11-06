@@ -6,15 +6,17 @@
 // Phase 3 - the runtime half that turns those calls into cfg reads and writes.
 //
 // Every hook is fail-soft and gated on TOTK_NATIVE_OPTIONS (default 0): with the key off the hooks return without
-// touching anything and the screen is the game's, byte for byte. The gate exists because the rows are not labelled
-// yet - rt_opt_message_utf16 produces their texts, but the message hook that hands them to the game (Phase 3.2)
-// still waits on its call contract - so the feature stays off until an in-game smoke test passes.
+// touching anything and the screen is the game's, byte for byte. The gate exists because none of it has run in the
+// game yet (the message hook's text format is an assumption, see rt_opt_msg_lookup), so the feature stays off until
+// an in-game smoke test passes.
 //
 // Contracts, from the lifted callers (plan "Hook argument contract"):
 //  - rt_opt_read   @hostif: c->x[0] context, c->x[1] out, c->x[2] binding, w3 = entry+0x20 key. Write the value
 //                 index (u32) to out, leave c->x[0] = 1 (found) and return 1 to take the call over.
 //  - rt_opt_store  @hostif: c->x[0] context, w1 = value index, c->x[2] binding, w3 = key. Map the index to the
 //                 item's cfg value, cfg_set it, leave c->x[0] = 1 and return 1.
+//  - rt_opt_msg_lookup @hostif: c->x[1] out object, c->x[3] pointer to the key string object. Fill the out object
+//                 with the text, leave c->x[0] = 0 (found) and return 1; see the comment at the hook.
 //  - the void ones @host: side effects only; leave c->nzcv, c->sp and x19-x29 alone.
 //
 // A row is one Item: a cfg key with the values it accepts, in cycle order. A toggle is a two-value choice
@@ -193,8 +195,7 @@ static int opt_text_utf8(const char *key, char *out, size_t cap) {
 }
 
 // UTF-16 for the guest, which keeps message text as NUL-terminated char16. Returns the units written before the NUL
-// (at most cap - 1), or 0 when key is not one of ours. This is the whole of what the message hook has to produce
-// once the call contract of main+0xba1730 is confirmed (plan Phase 3.2).
+// (at most cap - 1), or 0 when key is not one of ours. rt_opt_msg_lookup below hands this text to the game.
 size_t rt_opt_message_utf16(const char *key, uint16_t *out, size_t cap) {
     char utf8[512];
     if (!cap || !opt_text_utf8(key, utf8, sizeof utf8)) return 0;
@@ -320,14 +321,73 @@ void rt_opt_decide(Cpu *c) {
     (void)c;
 }
 
-// The message apply (main+0xba1730): the row titles, value texts and captions come from the sheet key built off the
-// option id, so our synthetic ids resolve to nothing in the game's sheet and the rows read blank. rt_opt_message_utf16
-// above produces the text; what is still missing is the hook's own contract - which register holds the key string
-// and where the UTF-16 result goes - and that needs the lifted C of main+0xba1730 (and its callers
-// main+0xf4444 / main+0xba42c0), which lives only in a local generated/v143. Taking the call over on a guess would
-// corrupt every message on screen, so the hook returns 0 (the game's own lookup runs) until the contract is
-// verified; the feature stays behind TOTK_NATIVE_OPTIONS (default 0) meanwhile.
+// The message lookup (main+0xb3e3c0): row titles, value texts and captions come from a sheet key built off the option
+// id, so our synthetic ids resolve to nothing in the game's sheet and the rows would read blank. This hook answers
+// the lookup for our keys and leaves every other key to the game.
+//
+// Contract, read from the lifted C of 1.4.3 (plan "Message apply path"): the callers (main+0x212c6ac title,
+// main+0x212c0e8 value text, main+0x218c748 caption) build the key with main+0xf4444 into a small string object, then
+// reach main+0xb3e3c0(x0 = message manager, x1 = out, x2 = &sheet-name pointer, x3 = &key string object). The key
+// characters are at [[x3] + 0]. The lookup fills the out object {char16 *text @+0, u32 length @+8, u64 handle @+0x10}
+// and returns 0 for a text it found; main+0xba1730 then hands it to the row's pane, and main+0x610348 passes
+// [out+0] and [out+8] to the pane's set-text virtual and stores [out+0x10] at pane+0x160. The game's own "no text"
+// results use ~0 for the handle, so that is what we write. A taken hook leaves 0 in c->x[0] (the success the caller
+// expects), writes only through x1, and touches no callee-saved register.
+//
+// Assumed, not yet seen in game: the text is NUL-terminated UTF-16 and the length counts char16 units - what the
+// game's message sheets hold. The in-game smoke test (plan 4.2) is what confirms it; until then the feature stays
+// behind TOTK_NATIVE_OPTIONS (default 0).
+//
+// The game may keep the pointer in the pane rather than copy the text, so each key has its own buffer that lives for
+// the whole run (a ring of reused buffers could overwrite a text still on screen). A key is rendered again on every
+// call, so a language change shows up the next time the screen builds its rows.
+#define MSG_UNITS 512
+#define MSG_MAXV 8
+enum { MSG_SLOTS = NITEMS * (2 + MSG_MAXV) };
+static uint16_t g_msg[MSG_SLOTS][MSG_UNITS];
+
+// Slot of a parsed key: title and caption of each item first, then its values.
+static int msg_slot(const OptMsgKey *k) {
+    int i = (int)(k->id - ITEM_ID_BASE);
+    switch (k->kind) {
+    case OPT_MSG_TITLE: return i * (2 + MSG_MAXV);
+    case OPT_MSG_CAPTION: return i * (2 + MSG_MAXV) + 1;
+    case OPT_MSG_VALUE:
+        if (k->value >= MSG_MAXV) return -1;
+        return i * (2 + MSG_MAXV) + 2 + (int)k->value;
+    default: return -1;
+    }
+}
+
 int rt_opt_msg_lookup(Cpu *c) {
-    (void)c;
-    return 0;
+    if (!enabled()) return 0;
+    uint64_t out = c->x[1], keyobj = c->x[3];
+    if (out < 0x10000 || keyobj < 0x10000) return 0;
+    uint64_t kp = rd64(keyobj);
+    if (kp < 0x10000 || kp >= (1ull << 47)) return 0;
+
+    // The key string object holds at most 31 characters (main+0xf4444's capacity is 0x20); copy it bounded.
+    char key[32];
+    size_t n = 0;
+    while (n < sizeof key - 1) {
+        char ch;
+        memcpy(&ch, (const void *)(uintptr_t)(kp + n), 1);
+        if (!ch) break;
+        key[n++] = ch;
+    }
+    key[n] = 0;
+
+    OptMsgKey k;
+    if (!opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS, &k)) return 0;
+    int slot = msg_slot(&k);
+    if (slot < 0 || slot >= MSG_SLOTS) return 0;
+
+    size_t units = rt_opt_message_utf16(key, g_msg[slot], MSG_UNITS);
+    if (!units) return 0;   // one of our ids with no text (a value past the last): let the game answer
+
+    wr64(out + 0x0, (uint64_t)(uintptr_t)g_msg[slot]);
+    wr32(out + 0x8, (uint32_t)units);
+    wr64(out + 0x10, ~0ull);
+    c->x[0] = 0;
+    return 1;
 }

@@ -38,7 +38,7 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | done (back/close virtual + widget budget = Phase 2 verify) |
 | 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | done (see "Phase 2"; `back` site + widget budget still open) |
 | 3.1 | Runtime: `runtime/ui/game_options.c` (items, cfg read/store bridge, table swap) | done (gated off by `NATIVE_OPTIONS`; page navigation + messages still open) |
-| 3.2 | UTF-16 message injection + `ui_text.c` coverage | partly done: key parser + text resolver landed; `+0xba1730` read (it sets a widget path, see "Message apply path"); the hook still returns 0 until `+0x610348` and the key callers are read (rows read blank until then) |
+| 3.2 | UTF-16 message injection + `ui_text.c` coverage | hook written, not yet run in game: key parser, text resolver and `rt_opt_msg_lookup` at `+0xb3e3c0` (contract in "Message apply path"); open assumption is that the text is NUL-terminated UTF-16 with the length in char16 units - the smoke test (4.2) confirms it |
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
 | 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | pending |
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
@@ -283,6 +283,7 @@ u32 and validate at smoke test.
 | `f_7000923d20` | `+0x923d20` | generic flag write (used by kind-0 toggle decide) |
 | `f_7000980288` | `+0x980288` | generic value read (context, nameBuf, out, type) |
 | `f_7000ba1730` | `+0xba1730` | msg apply (widget, suffix, keyObj, …) |
+| `f_7000b3e3c0` | `+0xb3e3c0` | message lookup (manager, out, &sheet-name ptr, &key string object); **hook site** |
 | `f_70000f4444` / `f_7000ba42c0` | `+0xf4444` / `+0xba42c0` | msg key build (sprintf) / append sheet+key |
 
 **Decide / focus (vtable of the screen class)**
@@ -356,13 +357,22 @@ optimisation once the layout is known.
 - `main+0xba42c0(x0, x1, x2)` forwards to `main+0xb3e3c0(messageManager, x0, x1, x2)` where the manager is the pointer at
   `main+0x396bcf8` (dereferenced once more); it returns 1 when that call returns 0 and logs through `main+0xa9a7bc` /
   `main+0xc28b8c` otherwise. It is the "append sheet + key" step, not the text fetch.
-- **Still unknown** (blocks the hook): what `x2_arg` of `main+0xba1730` is (the `main+0xf4444` buffer, or an object the
-  `main+0xba42c0` / `main+0xb3e3c0` step produced from it) and which function finally turns it into the pane's text. Needs the
-  lifted C of `main+0x610348`, of `main+0xb3e3c0`, and of the callers that pass a key to `main+0xba1730`
-  (`main+0x212c6ac` kind-0 label, `main+0x212c0e8` value text, `main+0x218c748` caption setter).
-- Consequence for the hook: the three leaf names already say which text is wanted (title / value / caption), and the key
-  string in the buffer gives the option id and value id (`runtime/ui/opt_msgkey.h`). What the hook has to call to put UTF-16 into
-  the pane is the open item above, so `rt_opt_msg_lookup` still returns 0.
+- **Resolved (read from the lifted C of `+0x212c6ac`, `+0x212c0e8`, `+0x610348`, `+0xb3e3c0`)**: the callers build the key with
+  `+0xf4444` into a small string object on their stack, then call `+0xba42c0(out, &sheet-name ptr, &key object, 1)`, which
+  forwards to `+0xb3e3c0(manager, out, &sheet-name ptr, &key object)`. The key characters are at `[[key object] + 0]`;
+  the sheet name is a pointer to an ASCII string. `+0xb3e3c0` copies the sheet name, finds the sheet in the manager's list,
+  looks the key up and fills `out` = `{ text pointer @+0, u32 length @+0x8, u64 handle @+0x10 }`. It returns 0 for a text
+  found, 1 for an empty one, 2 for a null pointer, 3 when the sheet is missing (out then holds the game's own placeholder
+  string and a handle of `~0`). `+0xba1730` receives `out` as its `x2` argument unchanged and `+0x610348` hands
+  `[out+0]` and `[out+8]` to the leaf pane's virtual at vtable `+0x1a0` (set text), after storing `[out+0x10]` at
+  pane `+0x160`. So the whole text path is: key -> `+0xb3e3c0` -> `out` -> pane. The three leaf names only tell which
+  text is wanted; the key already carries the option and value id (`runtime/ui/opt_msgkey.h`).
+- **Hook placement**: `+0xb3e3c0` is the lowest point that sees both the key and `out`, and its first instruction
+  (`sub sp, sp, #0x160`, word `d10583ff`) writes no flags, so it is a valid `@hostif` entry. `rt_opt_msg_lookup`
+  fills `out`, leaves 0 in `x0` and returns 1 for our keys; every other key returns 0 and the original runs.
+- **Not yet verified in game**: that the pane's set-text virtual reads NUL-terminated UTF-16 with the length counted in
+  char16 units. It is what the game's message sheets hold and what the fallback strings' lengths (13 and 14) suggest, but
+  no log line has confirmed it.
 
 **Remaining Phase 2 verify items**: back/close virtual (candidates among slots 86/92/98); exact eui
 input dispatcher that calls slot45/49 (framework-internal, not required if hooks sit lower).
@@ -392,7 +402,7 @@ Landed with it:
   1.4.3 NSO): `@host` for `rt_opt_screen_open` (`+0x218d58c`), `rt_opt_build_rows` (`+0x218bb10`, carries
   `flag_type`), `rt_opt_tick` (`+0x218c5c0`), `rt_opt_decide` (`+0x218d274`, may rewrite `c->x[1]` to a
   sentinel); `@hostif` for `rt_opt_read` (`+0x980288`), `rt_opt_store` (`+0x170210` and `+0x923d20`),
-  `rt_opt_msg_lookup` (`+0xba1730`).
+  `rt_opt_msg_lookup` (`+0xb3e3c0`, moved from `+0xba1730`).
 - The hooks live in `runtime/ui/game_options.c` (auto-compiled: `tools/build_game.py`'s `runtime_sources()` globs
   `ui/*.c` as well as `runtime/*.c`); Phase 3 replaced the Phase 2 fail-soft stubs there with the item table, the
   table swap and the cfg read/store bridge. `reset` has no game site (runtime writes entry defaults), `back` waits
@@ -414,7 +424,7 @@ SavageWind instead injects **C** (`{ extern void rt_opt_rows(void); rt_opt_rows(
 | `read` | generic getter `+0x980288`; row sync `+0x212bf04` | |
 | `store` | choice `+0x212c1e0` → `+0x170210`; toggle `+0x212c818` → `+0x923d20` | |
 | `reset` | none in game → runtime-owned (write entry defaults, entry+0x8 candidate) | |
-| `msg_lookup` | apply `+0xba1730`; key build `+0xf4444` / `+0xba42c0`; sheet `LayoutMsg/SystemOption_00` | |
+| `msg_lookup` | lookup `+0xb3e3c0` (hook); apply `+0xba1730`; key build `+0xf4444` / `+0xba42c0`; sheet `LayoutMsg/SystemOption_00` | |
 | `decide` | vtable slot49 `+0x218d274` | dispatches per kind |
 | `tick` | vtable slot88 `+0x218c5c0`; dirty refresh `+0x2001914` → `+0x218d3e0` | |
 | `back` | TBD (slots 86/92/98 candidates) | open-request bit +0x175 already known from `menu_cursor.c` |
@@ -476,11 +486,13 @@ file under `runtime/ui/` is picked up without generator changes.
   comes from the environment, "after restart" for keys the metas table does not mark live (`ANISO`, `HDR`,
   `OPERATION_MODE`, `AUDIO_CHANNELS`). Checked against `runtime/cfg.c`: all 14 item keys exist and every accepted
   value string matches its metas row.
-- **Messages, still open — the hook contract**: `rt_opt_msg_lookup` (`@hostif` at `main+0xba1730`) still returns 0.
-  The call is now understood (see "Message apply path" in Phase 1 findings): `x1` is a widget path ending in the leaf pane
-  name, `x2` an opaque key argument. Missing: the format of that argument and the function that writes text into the pane,
-  both behind `main+0x610348` / `main+0xb3e3c0`. Also unconfirmed: that the caption key `%04d` is built from the option id
-  (and not the row index) — the parser accepts the bare id.
+- **Messages, hook written** (`rt_opt_msg_lookup`, `@hostif` at `main+0xb3e3c0`, see "Message apply path"): for a key of ours it
+  fills the out object with a per-key UTF-16 buffer (each title, caption and value has its own buffer that lives for the
+  run, in case the pane keeps the pointer instead of copying), the unit count, and a handle of `~0`, then leaves 0 in
+  `x0`. Checked on the host with fake guest memory against the real `cfg.c` / `ui_text.c`: our title, value and caption
+  keys are taken over with the right text and length, game keys (`1001`, `1001_02`, `0001`) and a value past an item's
+  last are left to the game with `out` untouched, and with `TOTK_NATIVE_OPTIONS=0` nothing is taken. Open: the UTF-16
+  assumption above, and that the caption key `%04d` is built from the option id (and not the row index) - the parser accepts the bare id.
 - Still open after messages: **page navigation** (`rt_opt_decide` + a screen reopen, which would let each
   section have its own page and stop ours from displacing the game's tail rows).
 

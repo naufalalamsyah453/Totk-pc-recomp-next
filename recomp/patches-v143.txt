@@ -1016,4 +1016,4 @@ site opts main 218d274 a9bc7bfd @host:rt_opt_decide a9bc7bfd       # decide entr
 site opts main 980288 a9bc7bfd @hostif:rt_opt_read                # generic getter entry; a taken hook leaves the value in c->x[0]
 site opts main 170210 a9bd7bfd @hostif:rt_opt_store                # choice store entry
 site opts main 923d20 d10103ff @hostif:rt_opt_store                # toggle store entry
-site opts main ba1730 a9bd7bfd @hostif:rt_opt_msg_lookup           # msg apply entry; a taken hook leaves the result in c->x[0]
+site opts main b3e3c0 d10583ff @hostif:rt_opt_msg_lookup           # message sheet+key lookup entry; a taken hook fills the out object and leaves 0 in c->x[0]
