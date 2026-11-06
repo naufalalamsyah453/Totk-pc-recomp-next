@@ -260,6 +260,25 @@ static int install(uint64_t table) {
 
 // ---- the hooks
 
+// Diagnostic for finding the screen's owner (plan Phase 3): logs the return address and the frame-pointer chain
+// (x29 -> {previous x29, saved lr}) above a hook, main-relative.
+static void log_callers(const char *what, Cpu *c) {
+    uint64_t base = MOD_MAIN_BASE;
+    char chain[256];
+    size_t n = 0;
+    uint64_t fp = c->x[29];
+    for (int d = 0; d < 8 && fp && n + 24 < sizeof chain; d++) {
+        uint64_t saved = rd64(fp + 8);
+        n += (size_t)snprintf(chain + n, sizeof chain - n, " %llx", (unsigned long long)(saved - base));
+        uint64_t next = rd64(fp);
+        if (next <= fp) break;
+        fp = next;
+    }
+    chain[n] = 0;
+    rt_log("native options: %s, x0=%llx lr=main+0x%llx frames:%s", what, (unsigned long long)c->x[0],
+           (unsigned long long)(c->x[30] - base), chain);
+}
+
 // The screen building its rows (slot84): present our array before the original reads the table, so it allocates
 // and wires rows for whatever count is installed. Runs every build; install only ever captures the game's own
 // entries, which is the state before the first swap.
@@ -310,22 +329,13 @@ int rt_opt_store(Cpu *c) {
 // decide hook (plan Phase 3).
 void rt_opt_screen_open(Cpu *c) {
     if (!enabled()) return;
-    // Diagnostic for finding the screen's owner (plan Phase 3): the return address says which generic creator built
-    // the screen, and the frame-pointer chain (x29 -> {previous x29, saved lr}) names the callers above it. Offsets are
-    // main-relative.
-    uint64_t base = MOD_MAIN_BASE;
-    char chain[256];
-    size_t n = 0;
-    uint64_t fp = c->x[29];
-    for (int d = 0; d < 8 && fp && n + 24 < sizeof chain; d++) {
-        uint64_t saved = rd64(fp + 8);
-        n += (size_t)snprintf(chain + n, sizeof chain - n, " %llx", (unsigned long long)(saved - base));
-        uint64_t next = rd64(fp);
-        if (next <= fp) break;
-        fp = next;
-    }
-    chain[n] = 0;
-    rt_log("native options: screen created, lr=main+0x%llx frames:%s", (unsigned long long)(c->x[30] - base), chain);
+    log_callers("screen created", c);
+}
+
+// The screen's destructor body (main+0x218ba60): who tears the Options screen down on B or when its owner closes.
+void rt_opt_screen_close(Cpu *c) {
+    if (!enabled()) return;
+    log_callers("screen destroyed", c);
 }
 
 // Row population (main+0x218c5c0, slot 88): runs once per opening, after the rows exist and before their texts are

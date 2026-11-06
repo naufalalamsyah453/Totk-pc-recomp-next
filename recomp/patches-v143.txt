@@ -1010,6 +1010,7 @@ site cascade main 6fad4c 52a86408 @page:x8 b9404d08   # mov w8, #160.0 -> ldr w8
 # live in runtime/ui/game_options.c and are gated on the TOTK_NATIVE_OPTIONS cfg key, so this set defaults off and
 # the screen is the game's until the key is set.
 site opts main 218d58c a9be7bfd @host:rt_opt_screen_open a9be7bfd   # factory entry (vtable slot100), before the ctor
+site opts main 218ba60 a9be7bfd @host:rt_opt_screen_close a9be7bfd   # destructor body entry: diagnostic, who closes the screen
 site opts main 218bb10 d102c3ff @host:rt_opt_build_rows d102c3ff   # build_rows entry (slot84), before the table count read
 site opts main 218c5c0 a9ba7bfd @host:rt_opt_tick a9ba7bfd         # tick entry (slot88)
 site opts main 218d274 a9bc7bfd @host:rt_opt_decide a9bc7bfd       # decide entry (slot49); may rewrite c->x[1] to a sentinel
