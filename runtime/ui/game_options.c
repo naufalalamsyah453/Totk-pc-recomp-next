@@ -28,6 +28,7 @@
 
 #include "cfg.h"
 #include "cpu.h"
+#include "host.h"
 #include "layout.h"
 #include "ui/game_options.h"
 #include "ui/opt_msgkey.h"
@@ -308,7 +309,23 @@ int rt_opt_store(Cpu *c) {
 // The screen opening: no side effect yet - the page state and the reopen-on-page-change path land with the
 // decide hook (plan Phase 3).
 void rt_opt_screen_open(Cpu *c) {
-    (void)c;
+    if (!enabled()) return;
+    // Diagnostic for finding the screen's owner (plan Phase 3): the return address says which generic creator built
+    // the screen, and the frame-pointer chain (x29 -> {previous x29, saved lr}) names the callers above it. Offsets are
+    // main-relative.
+    uint64_t base = MOD_MAIN_BASE;
+    char chain[256];
+    size_t n = 0;
+    uint64_t fp = c->x[29];
+    for (int d = 0; d < 8 && fp && n + 24 < sizeof chain; d++) {
+        uint64_t saved = rd64(fp + 8);
+        n += (size_t)snprintf(chain + n, sizeof chain - n, " %llx", (unsigned long long)(saved - base));
+        uint64_t next = rd64(fp);
+        if (next <= fp) break;
+        fp = next;
+    }
+    chain[n] = 0;
+    rt_log("native options: screen created, lr=main+0x%llx frames:%s", (unsigned long long)(c->x[30] - base), chain);
 }
 
 // Row population (main+0x218c5c0, slot 88): runs once per opening, after the rows exist and before their texts are
@@ -323,7 +340,9 @@ void rt_opt_tick(Cpu *c) {
 // it empty the injected rows still toggle and cycle through the game's own kind-0/kind-1 handlers, which reach
 // rt_opt_store above.
 void rt_opt_decide(Cpu *c) {
-    (void)c;
+    if (!enabled()) return;
+    rt_log("native options: decide, screen=%llx lr=main+0x%llx", (unsigned long long)c->x[0],
+           (unsigned long long)(c->x[30] - MOD_MAIN_BASE));
 }
 
 // The message lookup (main+0xb3e3c0): row titles, value texts and captions come from a sheet key built off the option
