@@ -38,7 +38,7 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | done (back/close virtual + widget budget = Phase 2 verify) |
 | 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | done (see "Phase 2"; `back` site + widget budget still open) |
 | 3.1 | Runtime: `runtime/ui/game_options.c` (items, cfg read/store bridge, table swap) | done (gated off by `NATIVE_OPTIONS`; page navigation + messages still open) |
-| 3.2 | UTF-16 message injection + `ui_text.c` coverage | pending (row titles/values read blank until this lands) |
+| 3.2 | UTF-16 message injection + `ui_text.c` coverage | partly done: key parser + text resolver landed; the `rt_opt_msg_lookup` hook still returns 0 until the `+0xba1730` call contract is read from the lifted C (rows read blank until then) |
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
 | 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | pending |
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
@@ -108,7 +108,7 @@ File: `Revivedx/SavageWindRecomp` → `runtime/ui/game_options.mm`, hooks from `
 | content-guard | ubuntu | `python tools/check_content.py` (same as upstream) |
 | unit-no-game | ubuntu | `pack_shader_cache_test.py`, `spin_waits_test.py`, `worktree_test.py` (stdlib / no game; `capstone`, `lz4`) |
 | unit-py314 | ubuntu | `installer_test.py`, `ncz_test.py`, `romfs_prompts_test.py` (Python 3.14 + pinned reqs) |
-| unit-windows | windows | `flags_check.py`, `excl_mt.py` (MSYS2 clang; `capstone`, `unicorn`; expands later) |
+| unit-windows | windows | `flags_check.py`, `excl_mt.py`, `opt_msgkey_check.py` (MSYS2 clang; `capstone`, `unicorn`; expands later) |
 
 Not in CI (need game files or huge toolchains): `jumptables_check.py`, `diff/lift.py`, `diff/func.py`,
 `installer_e2e.py`, full `make_release.py --prove`. Track them in Status when a private runner exists.
@@ -441,8 +441,20 @@ file under `runtime/ui/` is picked up without generator changes.
   of the game's** (so ours sit inside the layout's widget budget), writing it to table `+0x8`/`+0x0`.
 - Our option ids come from `0x8000+i` and value keys from `0x4e000000+i`, ranges the game does not use, so
   entry-by-id and the read/store dispatch never confuse ours with a game entry.
-- Still open, in order: **messages** (Phase 3.2 — `rt_opt_msg_lookup` returns 0, so injected rows read blank
-  until it supplies UTF-16), then **page navigation** (`rt_opt_decide` + a screen reopen, which would let each
+- **Messages (Phase 3.2), host half landed**: `runtime/ui/opt_msgkey.h` classifies a message key as one of our
+  title (`10<id>`), value (`10<id>_<vv>`) or caption (`<id>`) keys, keyed on our option-id range
+  `[0x8000, 0x8000 + NITEMS)` (tested by `tests/opt_msgkey_check.py`); `rt_opt_message_utf16` in `game_options.c`
+  turns such a key into UTF-16 from the menu catalog (`ui_text.c`: every Item carries its title, caption and
+  per-value catalog ids, so en, ru, pt-BR and zh-Hans already work). Value ids are the value indices, because our
+  entries' value array is `[0, 1, ...]`.
+- **Messages, still open — the hook contract**: `rt_opt_msg_lookup` (`@hostif` at `main+0xba1730`) still returns 0.
+  To take the call over it must know which register holds the key string (or the `keyObj` that wraps it) and where
+  the UTF-16 result goes, and whether the title/value/caption suffixes (`T_Option_00`, `T_Text_00`, `T_Caption_00`)
+  reach this function or an inner one. Read that from the lifted C of `main+0xba1730` and its key builders
+  `main+0xf4444` / `main+0xba42c0` in the local `generated/v143`, record it under "Phase 1 findings", then fill the
+  hook body with `rt_opt_message_utf16`. Also unconfirmed: that the caption key `%04d` is built from the option id
+  (and not the row index) — the parser accepts the bare id.
+- Still open after messages: **page navigation** (`rt_opt_decide` + a screen reopen, which would let each
   section have its own page and stop ours from displacing the game's tail rows).
 
 ### Phase 4 — Input

@@ -7,8 +7,8 @@
 //
 // Every hook is fail-soft and gated on TOTK_NATIVE_OPTIONS (default 0): with the key off the hooks return without
 // touching anything and the screen is the game's, byte for byte. The gate exists because the rows are not labelled
-// yet - the message hook that would supply their titles (Phase 3.2) is still a stub - so the feature stays off
-// until an in-game smoke test passes.
+// yet - rt_opt_message_utf16 produces their texts, but the message hook that hands them to the game (Phase 3.2)
+// still waits on its call contract - so the feature stays off until an in-game smoke test passes.
 //
 // Contracts, from the lifted callers (plan "Hook argument contract"):
 //  - rt_opt_read   @hostif: c->x[0] context, c->x[1] out, c->x[2] binding, w3 = entry+0x20 key. Write the value
@@ -26,6 +26,10 @@
 #include "cfg.h"
 #include "cpu.h"
 #include "layout.h"
+#include "ui/game_options.h"
+#include "ui/opt_msgkey.h"
+#include "ui_text.h"
+#include "utf16.h"
 
 // Guest memory: the recomp maps the guest address space into this process, so a guest pointer is a valid host
 // pointer, exactly as menu_cursor.c reads the screen manager.
@@ -78,11 +82,17 @@ static uint64_t opt_table(void) {
 // after "|". The set is curated: tab_screen alone draws about thirty rows in the F1 menu, which cannot fit one
 // page of the game's fixed row widgets (plan Phase 3), so only the high-traffic keys come across here and the
 // rest stay on F1 until the page navigation that can partition them exists.
+// Texts come from the menu catalog (ui_text.c), so the rows read in the menu language like the F1 overlay does.
+// vtext[v] is the catalog id of value v's label, or NO_TEXT when the label is the literal vlit[v] (a number).
+#define NO_TEXT (-1)
 typedef struct {
     const char *cfg;
     const char *const *vals;
     int nvals;
-    int kind;   // 0 = toggle row, 1 = choice row
+    int kind;                 // 0 = toggle row, 1 = choice row
+    int title, desc;          // catalog ids: the row title and the caption shown while it is focused
+    const int *vtext;
+    const char *const *vlit;
 } Item;
 
 static const char *const v_onoff[] = {"0", "1"};
@@ -95,18 +105,36 @@ static const char *const v_channels[] = {"auto", "stereo", "5.1"};
 static const char *const v_pad[] = {"auto", "nintendo", "xbox"};
 static const char *const v_mouse[] = {"stick", "direct"};
 
+static const int t_onoff[] = {UI_MENU_OFF, UI_MENU_ON};
+static const int t_upscaler[] = {UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR};
+static const int t_perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
+static const int t_aspect[] = {UI_MENU_ASPECT_FIT, UI_MENU_ASPECT_STRETCH};
+static const int t_aniso[] = {UI_MENU_ANISO_GAME, NO_TEXT, NO_TEXT, NO_TEXT, NO_TEXT};
+static const char *const l_aniso[] = {NULL, "2x", "4x", "8x", "16x"};
+static const int t_mode[] = {UI_MENU_MODE_DOCKED, UI_MENU_MODE_HANDHELD};
+static const int t_channels[] = {UI_MENU_CHANNELS_AUTO, UI_MENU_CHANNELS_STEREO, UI_MENU_CHANNELS_51};
+static const int t_pad[] = {UI_MENU_PAD_LAYOUT_AUTO, UI_MENU_PAD_LAYOUT_NINTENDO, UI_MENU_PAD_LAYOUT_XBOX};
+static const int t_mouse[] = {UI_MENU_MOUSE_STICK, UI_MENU_MOUSE_DIRECT};
+
 static Item items[] = {
     // Screen
-    {"TOTK_FULLSCREEN", v_onoff, 2, 0}, {"TOTK_FXAA", v_onoff, 2, 0}, {"TOTK_HDR", v_onoff, 2, 0},
-    {"TOTK_UPSCALER", v_upscaler, 2, 1}, {"TOTK_PERF_OVERLAY", v_perf, 3, 1}, {"TOTK_ASPECT", v_aspect, 2, 1},
-    {"TOTK_ANISO", v_aniso, 5, 1},
+    {"TOTK_FULLSCREEN", v_onoff, 2, 0, UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC, t_onoff, NULL},
+    {"TOTK_FXAA", v_onoff, 2, 0, UI_MENU_FXAA, UI_MENU_FXAA_DESC, t_onoff, NULL},
+    {"TOTK_HDR", v_onoff, 2, 0, UI_MENU_HDR, UI_MENU_HDR_DESC, t_onoff, NULL},
+    {"TOTK_UPSCALER", v_upscaler, 2, 1, UI_MENU_UPSCALER, UI_MENU_UPSCALER_DESC, t_upscaler, NULL},
+    {"TOTK_PERF_OVERLAY", v_perf, 3, 1, UI_MENU_PERF_OVERLAY, UI_MENU_PERF_OVERLAY_DESC, t_perf, NULL},
+    {"TOTK_ASPECT", v_aspect, 2, 1, UI_MENU_ASPECT, UI_MENU_ASPECT_DESC, t_aspect, NULL},
+    {"TOTK_ANISO", v_aniso, 5, 1, UI_MENU_ANISO, UI_MENU_ANISO_DESC, t_aniso, l_aniso},
     // Game
-    {"TOTK_ASSUME_FOCUS", v_onoff, 2, 0}, {"TOTK_OPERATION_MODE", v_mode, 2, 1},
+    {"TOTK_ASSUME_FOCUS", v_onoff, 2, 0, UI_MENU_ASSUME_FOCUS, UI_MENU_ASSUME_FOCUS_DESC, t_onoff, NULL},
+    {"TOTK_OPERATION_MODE", v_mode, 2, 1, UI_MENU_OPERATION_MODE, UI_MENU_OPERATION_MODE_DESC, t_mode, NULL},
     // Sound
-    {"TOTK_AUDIO_CHANNELS", v_channels, 3, 1},
+    {"TOTK_AUDIO_CHANNELS", v_channels, 3, 1, UI_MENU_AUDIO_CHANNELS, UI_MENU_AUDIO_CHANNELS_DESC, t_channels, NULL},
     // Controls
-    {"TOTK_MOTION", v_onoff, 2, 0}, {"TOTK_MENU_CURSOR", v_onoff, 2, 0}, {"TOTK_PAD_LAYOUT", v_pad, 3, 1},
-    {"TOTK_MOUSE_MODE", v_mouse, 2, 1},
+    {"TOTK_MOTION", v_onoff, 2, 0, UI_MENU_MOTION, UI_MENU_MOTION_DESC, t_onoff, NULL},
+    {"TOTK_MENU_CURSOR", v_onoff, 2, 0, UI_MENU_MENU_CURSOR, UI_MENU_MENU_CURSOR_DESC, t_onoff, NULL},
+    {"TOTK_PAD_LAYOUT", v_pad, 3, 1, UI_MENU_PAD_LAYOUT, UI_MENU_PAD_LAYOUT_DESC, t_pad, NULL},
+    {"TOTK_MOUSE_MODE", v_mouse, 2, 1, UI_MENU_MOUSE_MODE, UI_MENU_MOUSE_MODE_DESC, t_mouse, NULL},
 };
 enum { NITEMS = (int)(sizeof items / sizeof items[0]) };
 
@@ -121,6 +149,48 @@ static int item_by_key(uint32_t key) {
     for (int i = 0; i < NITEMS; i++)
         if (item_key(i) == key) return i;
     return -1;
+}
+
+// ---- the texts of our rows
+//
+// The message key for a row's title, value or caption is built from the option id (runtime/ui/opt_msgkey.h), so an
+// id of ours picks the Item and the text comes from the menu catalog. Returns 1 and a NUL-terminated UTF-8 string in
+// out when key names one of our texts; 0 when the key is not ours or names nothing (a value id past the item's last).
+static int opt_text_utf8(const char *key, char *out, size_t cap) {
+    OptMsgKey k;
+    if (!cap || !opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS, &k)) return 0;
+    const Item *it = &items[k.id - ITEM_ID_BASE];
+    const char *text = NULL;
+    switch (k.kind) {
+    case OPT_MSG_TITLE:
+        text = menu_text((UiTextId)it->title);
+        break;
+    case OPT_MSG_CAPTION:
+        text = menu_text((UiTextId)it->desc);
+        break;
+    case OPT_MSG_VALUE:
+        if (k.value >= (uint32_t)it->nvals) return 0;
+        if (it->vtext[k.value] != NO_TEXT) text = menu_text((UiTextId)it->vtext[k.value]);
+        else if (it->vlit) text = it->vlit[k.value];
+        break;
+    default:
+        return 0;
+    }
+    if (!text || !*text) return 0;
+    size_t n = strlen(text);
+    if (n >= cap) n = cap - 1;
+    memcpy(out, text, n);
+    out[n] = 0;
+    return 1;
+}
+
+// UTF-16 for the guest, which keeps message text as NUL-terminated char16. Returns the units written before the NUL
+// (at most cap - 1), or 0 when key is not one of ours. This is the whole of what the message hook has to produce
+// once the call contract of main+0xba1730 is confirmed (plan Phase 3.2).
+size_t rt_opt_message_utf16(const char *key, uint16_t *out, size_t cap) {
+    char utf8[512];
+    if (!cap || !opt_text_utf8(key, utf8, sizeof utf8)) return 0;
+    return utf8_to_utf16(utf8, out, cap);
 }
 
 // ---- install: capture the game's entries once, then present ours in front of them
@@ -242,9 +312,13 @@ void rt_opt_decide(Cpu *c) {
     (void)c;
 }
 
-// The message apply: the row titles and value texts come from the sheet key "10%02d" built off the option id, so
-// our synthetic ids resolve to nothing and the rows read blank until this supplies UTF-16 for them (Phase 3.2).
-// Returning 0 leaves the call to the game, which is the correct fail-soft while the feature is gated off.
+// The message apply (main+0xba1730): the row titles, value texts and captions come from the sheet key built off the
+// option id, so our synthetic ids resolve to nothing in the game's sheet and the rows read blank. rt_opt_message_utf16
+// above produces the text; what is still missing is the hook's own contract - which register holds the key string
+// and where the UTF-16 result goes - and that needs the lifted C of main+0xba1730 (and its callers
+// main+0xf4444 / main+0xba42c0), which lives only in a local generated/v143. Taking the call over on a guess would
+// corrupt every message on screen, so the hook returns 0 (the game's own lookup runs) until the contract is
+// verified; the feature stays behind TOTK_NATIVE_OPTIONS (default 0) meanwhile.
 int rt_opt_msg_lookup(Cpu *c) {
     (void)c;
     return 0;

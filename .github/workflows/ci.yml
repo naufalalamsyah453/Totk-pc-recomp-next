@@ -79,3 +79,6 @@ jobs:
       - name: Exclusive monitor helpers under contention
         shell: msys2 {0}
         run: python tests/excl_mt.py --threads 4 --iters 2000
+      - name: Options screen message keys
+        shell: msys2 {0}
+        run: python tests/opt_msgkey_check.py
