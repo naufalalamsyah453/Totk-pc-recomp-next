@@ -31,6 +31,8 @@ jobs:
         run: python tests/pack_shader_cache_test.py
       - name: Spin-wait finder
         run: python tests/spin_waits_test.py
+      - name: Reference layout of the game-free release
+        run: python tests/layout_reference_check.py
       - name: Worktree junctions
         run: python tests/worktree_test.py
 

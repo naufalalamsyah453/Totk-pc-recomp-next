@@ -1,10 +1,14 @@
 name: Release (Windows)
 
-# Automatic Windows installer zip on version tags. No local builds.
-# Private game inputs (lifted generated/ and optional extracted/) come from secrets — never from this repo:
-#   GAME_INPUTS_URL    required: URL of a zip with generated/v143/** (and build/extracted/v143/** for --prove)
-#   GAME_INPUTS_TOKEN  optional Authorization header value (e.g. "Bearer …" or "token …")
-# Without GAME_INPUTS_URL the job fails closed with instructions; it never publishes a half-built installer.
+# Windows installer zip (TotK-Setup), built in CI without any game file: the release carries no game data, and the
+# player's own setup lifts and builds the game on their machine.
+#   - A tag v* publishes a release.
+#   - "Run workflow" (Actions tab) builds the zip as a downloadable artifact; give it a tag name (for example
+#     v0.3.11-test) to publish that run as a pre-release as well.
+# The runtime library is built against recomp/layout.py's reference layout (tools/make_release.py, layout_source).
+# Optional, never in this repo: secrets GAME_INPUTS_URL (+ GAME_INPUTS_TOKEN) point at a private zip with
+# generated/v143/** (and build/extracted/v143/** for --prove); when GAME_INPUTS_URL is set the job restores it and
+# builds against that layout and runs --prove instead.
 
 on:
   push:
@@ -12,9 +16,13 @@ on:
   workflow_dispatch:
     inputs:
       prove:
-        description: "Run make_release --prove (needs extracted game inputs in the zip)"
+        description: "Run make_release --prove (needs extracted game inputs in the private zip)"
         type: boolean
         default: false
+      tag:
+        description: "Publish this run as a pre-release with this tag (empty: artifact only)"
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -22,6 +30,7 @@ permissions:
 env:
   PY312: "3.12"
   PY314: "3.14"
+  HAVE_GAME_INPUTS: ${{ secrets.GAME_INPUTS_URL != '' }}
 
 jobs:
   windows-release:
@@ -56,6 +65,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
+          release: false   # the runner's own C:\msys64: tools/build_game.py and build_hactool.py use that path
           update: false
           path-type: inherit
           install: >-
@@ -85,16 +95,17 @@ jobs:
         shell: bash
         run: bash tools/fetch_refs.sh
 
-      - name: Restore private game inputs (generated / extracted)
+      - name: Build hactool
+        shell: pwsh
+        run: .venv\Scripts\python tools\build_hactool.py
+
+      - name: Restore private game inputs (optional)
+        if: env.HAVE_GAME_INPUTS == 'true'
         shell: pwsh
         env:
           GAME_INPUTS_URL: ${{ secrets.GAME_INPUTS_URL }}
           GAME_INPUTS_TOKEN: ${{ secrets.GAME_INPUTS_TOKEN }}
         run: |
-          if (-not $env:GAME_INPUTS_URL) {
-            Write-Host "::error::GAME_INPUTS_URL is not set. Seed a private zip (generated/v143 + optional build/extracted/v143) and add repository secrets GAME_INPUTS_URL / GAME_INPUTS_TOKEN. See docs/native-options-plan.md."
-            exit 1
-          }
           $headers = @{}
           if ($env:GAME_INPUTS_TOKEN) { $headers["Authorization"] = $env:GAME_INPUTS_TOKEN }
           $zip = Join-Path $env:RUNNER_TEMP "game-inputs.zip"
@@ -117,7 +128,7 @@ jobs:
           PROVE: ${{ (github.event_name == 'workflow_dispatch' && inputs.prove) || startsWith(github.ref, 'refs/tags/v') }}
         run: |
           $out = "build/release/TotK-Setup"
-          $zip = "build/release/TotK-Setup-${{ github.ref_name }}-windows.zip"
+          $zip = "build/release/TotK-Setup-${{ inputs.tag || github.ref_name }}-windows.zip"
           $extra = @()
           if ($env:PROVE -eq "true" -and (Test-Path "build/extracted/v143")) {
             $extra += "--prove"
@@ -147,10 +158,13 @@ jobs:
             build/release/SHA256SUMS.txt
           if-no-files-found: error
 
-      - name: GitHub Release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: GitHub Release (tags, or a manual run with a tag name)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
           files: |
             build/release/*.zip
             build/release/SHA256SUMS.txt

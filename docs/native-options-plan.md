@@ -44,7 +44,7 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
 | 6.1 | Port hooks to 1.2.1 (optional, after 1.4.3 works) | pending |
 | 7.1 | Green CI on main | done (run 42120809154) |
-| 7.2 | First automatic Windows release tag | pending (needs `GAME_INPUTS_URL` secret) |
+| 7.2 | First automatic Windows release tag | workflow reworked to build without game inputs; first run pending |
 
 ## Background
 
@@ -95,9 +95,12 @@ File: `Revivedx/SavageWindRecomp` → `runtime/ui/game_options.mm`, hooks from `
 
 - Public repo never holds game content, keys, or lifted C (`tools/check_content.py`, `GENERATED_MARKER`).
 - Pull requests and pushes run checks that need **no game files**.
+- The installer release (`TotK-Setup`) needs **no game files**: the runtime library is built against the reference
+  layout of `recomp/layout.py` (`reference()`), and the player's setup lifts and builds the game locally.
 - A full `totk.exe` / installer **prove** run needs extracted game + lifted `generated/v143`.
-  Those inputs are **private** (repository secret URL or private artifact), never committed.
-- Releases are produced only by Actions on tag `v*`.
+  Those inputs are **private** (repository secret URL or private artifact), never committed, and optional.
+- Releases are produced only by Actions: on a tag `v*`, or by a manual run (Actions tab, "Run workflow") that either
+  leaves the zip as an artifact or, with a tag name, publishes it as a pre-release.
 
 ### Workflows
 
@@ -106,7 +109,7 @@ File: `Revivedx/SavageWindRecomp` → `runtime/ui/game_options.mm`, hooks from `
 | Job | Runner | What |
 |---|---|---|
 | content-guard | ubuntu | `python tools/check_content.py` (same as upstream) |
-| unit-no-game | ubuntu | `pack_shader_cache_test.py`, `spin_waits_test.py`, `worktree_test.py` (stdlib / no game; `capstone`, `lz4`) |
+| unit-no-game | ubuntu | `pack_shader_cache_test.py`, `spin_waits_test.py`, `layout_reference_check.py`, `worktree_test.py` (stdlib / no game; `capstone`, `lz4`) |
 | unit-py314 | ubuntu | `installer_test.py`, `ncz_test.py`, `romfs_prompts_test.py` (Python 3.14 + pinned reqs) |
 | unit-windows | windows | `flags_check.py`, `excl_mt.py`, `opt_msgkey_check.py` (MSYS2 clang; `capstone`, `unicorn`; expands later) |
 
@@ -118,8 +121,8 @@ Not in CI (need game files or huge toolchains): `jumptables_check.py`, `diff/lif
 Windows job, high-level:
 
 1. Checkout + setup Python 3.12 / 3.14 + `uv` venvs (pinned `tools/requirements*.txt`).
-2. Setup MSYS2 UCRT64 toolchain (clang, lld, ninja, …) and .NET for `totk_xlate` if the prove path needs it.
-3. **Restore private game inputs** (when secret present):
+2. Setup MSYS2 UCRT64 toolchain (clang, lld, ninja, …) and .NET for `totk_xlate`; build `hactool` (`tools/build_hactool.py`).
+3. **Restore private game inputs** (optional, only when the secret is present; without it the release is built against the reference layout):
    - `GAME_INPUTS_URL` (+ optional `GAME_INPUTS_TOKEN`): zip containing `generated/v143/**` and, for `--prove`,
      `build/extracted/v143/**` (or a slim subset documented when seeding).
    - Unpack into the workspace paths `make_release.py` expects (`MAIN_ROOT` layout).
@@ -129,10 +132,11 @@ Windows job, high-level:
 6. `python tools/check_content.py` over the release folder (script already does this).
 7. Create GitHub Release for the tag and upload the zip (+ sha256).
 
-If `GAME_INPUTS_URL` is unset: the release job **fails with a clear message** (or is skipped when only
-`workflow_dispatch` without inputs) so a tag never publishes a half-broken installer silently.
+If `GAME_INPUTS_URL` is unset the job still builds the release (the log says the runtime library is built against the
+reference layout) and `--prove` is skipped with a warning. A manual run with the `tag` input empty only uploads the zip
+as a workflow artifact; with a tag name it also publishes a pre-release.
 
-### Seeding `GAME_INPUTS` (one-time, outside this repo)
+### Seeding `GAME_INPUTS` (optional, one-time, outside this repo; only for `--prove`)
 
 Game-derived trees must stay private. Recommended:
 
@@ -143,7 +147,7 @@ Game-derived trees must stay private. Recommended:
 3. Set repository secrets `GAME_INPUTS_URL` and, if needed, `GAME_INPUTS_TOKEN` (fine-grained PAT: read-only
    on that private repo).
 
-Until secrets exist: CI stays green on every push; release workflow is ready but will not publish a zip.
+Without the secrets the release is still built and published, just without the `--prove` check.
 
 ## Native Options — technical plan
 
@@ -536,7 +540,7 @@ Repeat Phase 1 address map for 1.2.1 then 1.1.0; add `patches-v121` / `v110` sit
 | Host-call veneer fights the lifter’s flag/branch rules | Follow `rt_spin_gate` precedent; keep stubs leaf functions; differential tests when a private runner exists |
 | Message hook misses colour tags → mojibake / missing glyphs | Reuse tags from a known-good game string; en first, other languages via existing `ui_text.c` |
 | Release without prove ships a broken installer | `--prove` required in release.yml when extracted inputs present; fail closed otherwise |
-| Secrets never seeded → no automatic zip | Document seeding; release job fails with actionable error, CI still green |
+| Secrets never seeded → release not proven | The release builds against the reference layout; `--prove` stays off until the private zip exists |
 | Scope creep (mods/cheats native) | Locked decisions table; reject PRs that move dynamic lists into option rows |
 
 ## Non-goals
@@ -552,7 +556,7 @@ Update this subsection after each infrastructure step.
 
 - [x] Workflows committed and pushed
 - [x] First CI run green on `main` (run 42120809154, commit `56e3e06`; fixes landed in `c9a8082`, `6baf44a`, `56e3e06`: ignore-list, `is_link` assert for POSIX symlinks, gitignore patterns without trailing slash, `capstone`/`unicorn` in unit-windows, ABA expectations aligned with the compare-and-swap monitor in `runtime/cpu.h`)
-- [x] Release workflow present (may fail closed until `GAME_INPUTS_URL` is set)
+- [x] Release workflow present (builds without game inputs; `--prove` needs `GAME_INPUTS_URL`)
 - [x] Old `naufalalamsyah453/totk-pc-recomp` confirmed gone / cleaned (404)
 - [ ] First `v*` tag after secrets → Windows zip on Releases
 

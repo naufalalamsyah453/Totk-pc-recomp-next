@@ -40,6 +40,20 @@ def layout(exefs):
     return out
 
 
+def reference():
+    """[(name, base, size)] for every module slot in load order, each with the placeholder size ALIGN.
+
+    For builds that must not read a game: the release's runtime library (tools/make_release.py without a lifted game).
+    The runtime reads only MOD_MAIN_BASE (always FIRST_BASE) and MOD_COUNT (the size of its per-module arrays, checked
+    against the real count at start), so listing every slot makes the count at least as large as any real layout's, and
+    the sizes are never read. The result must not be used to generate game code."""
+    out, base = [], FIRST_BASE
+    for name in ORDER:
+        out.append((name, base, ALIGN))
+        base = align_up(base + ALIGN)
+    return out
+
+
 def write(mods, outdir):
     """layout.json for Python tools and layout.h for the runtime."""
     outdir = Path(outdir)

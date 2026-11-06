@@ -23,9 +23,12 @@ cached in toolchain/release-dl/ and checked against the sha256 in PINS; a mismat
 --prove compiles the generated C and links build/release-check/totk.exe with nothing but the folder's python/, llvm/,
 runtime/ and bin/ (PATH holds the Windows system directory and those), then runs the four probes there.
 
-Both need one game version extracted and lifted first (tools/extract.py, recomp/gen.py): generated/v121 or, without
-it, generated/v143, and for --prove its build/extracted/<version> (they are read, nothing is written to them). The
-runtime library reads only what both versions' layout.h share (MOD_COUNT, MOD_MAIN_BASE), so either serves.
+--prove needs one game version extracted and lifted first (tools/extract.py, recomp/gen.py): generated/v121 or,
+without it, generated/v143, and its build/extracted/<version> (they are read, nothing is written to them).
+
+The release itself needs no game: the runtime library reads only what every version's layout.h shares (MOD_COUNT,
+MOD_MAIN_BASE). It builds against a lifted game's layout.h when generated/v121 or generated/v143 exists, and otherwise
+against recomp/layout.py's reference layout, so CI can build a release without a game file.
 
 A release also needs build/xlate built from the current sources (tools/build_xlate.py); the script stops first if not.
 
@@ -404,11 +407,26 @@ def profiles():
     return found
 
 
+def layout_source():
+    """(version, directory with layout.h and layout.json) for the runtime library: a lifted game's when there is one,
+    else recomp/layout.py's reference layout, so a release can be built without any game file (CI). --make-runtime-lib
+    reads nothing else from that directory."""
+    for version in ('v121', 'v143'):
+        gen = MAIN_ROOT / 'generated' / version
+        if (gen / 'layout.json').is_file():
+            return version, gen
+    sys.path.insert(0, str(ROOT / 'recomp'))
+    import layout   # noqa: E402  (recomp/layout.py)
+    gen = MAIN_ROOT / 'build' / 'release-check' / 'layout-reference'
+    layout.write(layout.reference(), gen)
+    print('make_release: no lifted game: the runtime library is built against the reference layout')
+    return 'v143', gen
+
+
 def runtime_lib(out, llvm, pgo):
     """Build libtotkrt.a (x86-64-v3) and libtotkrt-v2.a (x86-64-v2) with the folder's llvm/, and copy them, the headers
     and the install-side sources into runtime/. pgo: profiles() of the release."""
-    version = lifted_version()
-    gen = MAIN_ROOT / 'generated' / version
+    version, gen = layout_source()
     rt = out / 'runtime'
     # the runtime is the same for every update: any update's profile covers it (the newest update's, as players run it)
     newest = sorted(pgo.items())[-1:]
