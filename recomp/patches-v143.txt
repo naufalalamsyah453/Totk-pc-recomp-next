@@ -121,6 +121,7 @@ site mouse_direct main 1d59460 b9004be8 94761acc
 # (main+0x547964) resets a static DCtx of its own with which the game's zstd rejects some valid frames
 # (corruption_detected on a 473 KB frame the host decodes), and the game relies on that result.
 set zstd     TOTK_ZSTD_NATIVE    1
+set opts     TOTK_NATIVE_OPTIONS 1
 site zstd   main 5f5358 97e913a6 94d3ab26   # bl ZSTD_decompressMultiFrame -> page+0xff0
 site zstd   main 6d7788 97e58a9a 94d0221a   # bl ZSTD_decompressMultiFrame -> page+0xff0
 site zstd   main bdc8e8 97d17642 94bc0dc2   # bl ZSTD_decompressMultiFrame -> page+0xff0
@@ -1001,3 +1002,17 @@ site cascade main 6fabb8 52a83408 @page:x8 b9404108   # mov w8, #20.0  -> ldr w8
 site cascade main 6fac40 52a84408 @page:x8 b9404508   # mov w8, #40.0  -> ldr w8, [page+68]
 site cascade main 6facc8 52a85408 @page:x8 b9404908   # mov w8, #80.0  -> ldr w8, [page+72]
 site cascade main 6fad4c 52a86408 @page:x8 b9404d08   # mov w8, #160.0 -> ldr w8, [page+76]
+
+# Native Options screen hooks (docs/native-options-plan.md, Phase 2). A @host hook runs `rt_opt_*(c)` where it sits
+# in the replacement and the original instruction follows; a @hostif hook runs first and a non-zero return takes the
+# guest call over (the hook did the call's work and leaves the result in c->x[0]; the lifted function then returns),
+# zero runs the original. Every site is the entry instruction of its function, a flag-neutral prologue. The stubs in
+# runtime/native_options.c do nothing / return 0 until Phase 3 fills them in.
+site opts main 218d58c a9be7bfd @host:rt_opt_screen_open a9be7bfd   # factory entry (vtable slot100), before the ctor
+site opts main 218bb10 d102c3ff @host:rt_opt_build_rows d102c3ff   # build_rows entry (slot84), before the table count read
+site opts main 218c5c0 a9ba7bfd @host:rt_opt_tick a9ba7bfd         # tick entry (slot88)
+site opts main 218d274 a9bc7bfd @host:rt_opt_decide a9bc7bfd       # decide entry (slot49); may rewrite c->x[1] to a sentinel
+site opts main 980288 a9bc7bfd @hostif:rt_opt_read                # generic getter entry; a taken hook leaves the value in c->x[0]
+site opts main 170210 a9bd7bfd @hostif:rt_opt_store                # choice store entry
+site opts main 923d20 d10103ff @hostif:rt_opt_store                # toggle store entry
+site opts main ba1730 a9bd7bfd @hostif:rt_opt_msg_lookup           # msg apply entry; a taken hook leaves the result in c->x[0]

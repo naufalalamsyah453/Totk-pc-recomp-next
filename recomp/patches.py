@@ -25,14 +25,24 @@ a bl (lifted with the site's return address), a b or b.cond / cbz / tbz (its tar
 inside it) or a ret; earlier words must not branch. Every alternative of a site writes the same flags. The generator
 writes patches.h (set names, switches, the page address) next to layout.h for the runtime.
 
+A replacement word may instead be a host call: `@host:<symbol>` runs `void <symbol>(Cpu *c)` in the runtime where it
+sits in the word list and the words after it still run, so `@host:s <orig>` runs the hook before the original and
+`<orig> @host:s` after it; `@hostif:<symbol>` must be the only word of its alternative and runs
+`int <symbol>(Cpu *c)` first — a non-zero return takes the guest call over: the hook has done the call's work (set
+c->x[0] to the value the caller expects) and the generator returns from the lifted function, while zero runs the
+original instruction. A `@hostif` site therefore sits at a function's entry, and its original must not write flags.
+Hooks must not touch c->nzcv; the generator spills and reloads the register locals around every host call.
+
 A `spin` line names a spin wait found by tools/spin_waits.py: a loop with head <head> that only another thread can end,
 and the direct branches back to it (module offsets). Each back-edge (checked: a b, b.cond, cbz / cbnz or tbz / tbnz to
 <head>) is lifted as `rt_spin_gate(c, <head>); goto <head>`, which keeps every register and only adds time
 (runtime/kernel.c kern_spin_gate).
 """
+import re
 from pathlib import Path
 
 PAGE = 0x1000
+HOST_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 
 
 class PatchError(ValueError):
@@ -48,8 +58,8 @@ def adrp(pc, target, rd):
 
 
 class Table:
-    """sets: [(name, env, default)]; sites: {module: {offset: [(set index, [word | ('page', reg)], original)]}} (the
-    alternatives of a site in file order); page."""
+    """sets: [(name, env, default)]; sites: {module: {offset: [(set index, [word | ('page', reg) |
+    ('host' | 'hostif', symbol)], original)]}} (the alternatives of a site in file order); page."""
 
     def __init__(self, sets=(), sites=None, page=0, spins=None):
         self.sets = list(sets)
@@ -62,11 +72,12 @@ class Table:
         return {base + b: base + h for b, h in self.spins.get(name, {}).items()}
 
     def for_module(self, name, base):
-        """{absolute address: [(set index, [words])]} with @page resolved."""
+        """{absolute address: [(set index, [words])]} with @page resolved; host words pass through."""
         out = {}
         for off, alts in self.sites.get(name, {}).items():
             a = base + off
-            out[a] = [(k, [adrp(a, self.page, w[1]) if isinstance(w, tuple) else w for w in repl])
+            out[a] = [(k, [adrp(a, self.page, w[1]) if isinstance(w, tuple) and w[0] == 'page' else w
+                          for w in repl])
                       for k, repl, _ in alts]
         return out
 
@@ -95,8 +106,17 @@ def load(path, mods):
             for w in f[5:]:
                 if w.startswith('@page:x'):
                     repl.append(('page', int(w[7:])))
+                elif w.startswith('@hostif:'):
+                    repl.append(('hostif', w[8:]))
+                elif w.startswith('@host:'):
+                    repl.append(('host', w[6:]))
                 else:
                     repl.append(int(w, 16))
+            if len(repl) > 1 and any(isinstance(w, tuple) and w[0] == 'hostif' for w in repl):
+                raise PatchError(f'{where}: @hostif must be the only replacement word')
+            for w in repl:
+                if isinstance(w, tuple) and w[0] in ('host', 'hostif') and not HOST_RE.fullmatch(w[1]):
+                    raise PatchError(f'{where}: bad host symbol {w[1]!r}')
             alts = sites.setdefault(f[2], {}).setdefault(off, [])
             if any(k == index[f[1]] for k, _, _ in alts):
                 raise PatchError(f'{where}: {f[2]}+{off:#x} patched twice by set {f[1]}')

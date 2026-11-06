@@ -205,6 +205,18 @@ def partition(est, max_fns, max_bytes, big_fn):
 
 # ------------------------------------------------------------------------------------------------ emission
 
+class HostWord:
+    """A host call in a patch replacement (recomp/patches.py @host / @hostif): a pseudo-word the generator lifts to
+    `sym(c)` instead of an ARM instruction. kind 'host' runs and the words after it still run; kind 'hostif' is the
+    only word of its alternative and, on a non-zero return, the generator returns from the lifted function."""
+
+    __slots__ = ('kind', 'sym')
+
+    def __init__(self, kind, sym):
+        self.kind = kind
+        self.sym = sym
+
+
 class Emitter:
     """C for the functions of one module. starts is the set of every function start of the module."""
 
@@ -216,6 +228,7 @@ class Emitter:
         self.reg_locals = reg_locals   # recomp/regs.py: registers per function in C locals
         self.kept = regs.CALLEE_SAVED if callee_saved else frozenset()   # not reloaded after a call
         self.uses_patches = False
+        self.host_syms = {}     # {hook symbol: C return type} of this chunk's host calls (recomp/patches.py)
         self.stats = Counter()
         self.unsupported = Counter()
 
@@ -260,16 +273,33 @@ class Emitter:
 
     def replacements(self, a):
         """The lifted words of each alternative of the patched site a, in set order. Only the last word of an
-        alternative may branch (bl, b, b.cond / cbz / tbz, ret)."""
+        alternative may branch (bl, b, b.cond / cbz / tbz, ret); a host word may sit anywhere but a hostif word
+        must be the alternative's only word."""
         out = []
         for _, words in self.patched[a]:
-            lifted = [self.mod.lifter.lift(w, a) for w in words]
+            lifted = [self.host_word(a, w) if isinstance(w, tuple) else self.mod.lifter.lift(w, a)
+                      for w in words]
             for j, r in enumerate(lifted):
                 last = j == len(lifted) - 1
-                if r.kind != 'op' and not (last and r.kind in ('bl', 'b', 'bcond', 'ret')):
+                if r.kind == 'hostif':
+                    if not last or len(lifted) != 1:
+                        raise patches.PatchError(f'{a:#x}: @hostif:{r.sym} must be the only replacement word')
+                elif r.kind != 'op' and r.kind != 'host' and not (last and r.kind in ('bl', 'b', 'bcond', 'ret')):
                     raise patches.PatchError(f'{a:#x}: replacement word {words[j]:08x} is a {r.kind}')
             out.append(lifted)
         return out
+
+    def host_word(self, a, w):
+        """The pseudo-word of a @host / @hostif replacement token (recomp/patches.py), recorded for the chunk's
+        prototypes."""
+        kind, sym = w
+        if not patches.HOST_RE.fullmatch(sym):
+            raise patches.PatchError(f'{a:#x}: bad host symbol {sym!r}')
+        ret = 'void' if kind == 'host' else 'int'
+        if sym in self.host_syms and self.host_syms[sym] != ret:
+            raise patches.PatchError(f'{a:#x}: {sym} is both a @{self.host_syms[sym]} and a @{ret} hook')
+        self.host_syms[sym] = ret
+        return HostWord(kind, sym)
 
     def flow(self, insns, entry, end, tables):
         """Successors of each instruction inside the function [entry, end). Index len(insns) stands for falling
@@ -279,7 +309,7 @@ class Emitter:
 
         def of(ins, i):
             k = ins.kind
-            if k in ('op', 'bl', 'blr'):
+            if k in ('op', 'bl', 'blr', 'host', 'hostif'):
                 return [i + 1]
             if k == 'b':
                 return idx(ins.target)
@@ -337,6 +367,9 @@ class Emitter:
             if len(fx) > 1:
                 raise patches.PatchError(f'{a:#x}: several flag-using words in one alternative')
             alts.append(fx[0] if fx else (False, None))
+        if any(words[0].kind == 'hostif' for words in self.replacements(a)) and alts[0][1]:
+            raise patches.PatchError(f'{a:#x}: @hostif cannot take over from an instruction that writes '
+                                     f'flags ({alts[0][1]})')
         if any(e[1] != alts[0][1] for e in alts):
             raise patches.PatchError(f'{a:#x}: the alternatives write different flags ({[e[1] for e in alts]})')
         reads = any(e[0] for e in alts)
@@ -417,6 +450,8 @@ class Emitter:
             """C of one lifted word of a patched site."""
             if r.kind == 'op':
                 return op(i, r.code)
+            if r.kind == 'host':
+                return f'{spill}{r.sym}(c);{reload}'
             if r.kind == 'bl':
                 return call(r.target, a)
             if r.kind == 'b':
@@ -433,7 +468,16 @@ class Emitter:
                 raise patches.PatchError(f'{a:#x}: patched instruction is a {ins.kind}')
             line = '   '
             for (k, _), words in zip(self.patched[a], self.replacements(a)):
-                line += f' if (rt_patch_on[{k}]) {{ {" ".join(one(i, r, a) for r in words)} }} else'
+                if words[0].kind == 'hostif':
+                    # The hook runs first; non-zero means it took the guest call over and the lifted function
+                    # returns with whatever it left in the Cpu (an entry site: nothing has run yet).
+                    if a != entry:
+                        raise patches.PatchError(f'{a:#x}: @hostif returns from the function, so it must sit '
+                                                 f'at its entry ({entry:#x})')
+                    line += (f' if (rt_patch_on[{k}]) {{ {spill}if ({words[0].sym}(c)) {{ return; }}'
+                             f' {reload} {one(i, ins, a)} }} else')
+                else:
+                    line += f' if (rt_patch_on[{k}]) {{ {" ".join(one(i, r, a) for r in words)} }} else'
             self.uses_patches = True
             self.stats['patched_sites'] += 1
             return f'{line} {{ {one(i, ins, a)} }}'
@@ -510,6 +554,7 @@ def chunk_text(name, number, emitter, fns):
     """C text of one chunk. fns: [(entry, end)]."""
     body, refs = [], set()
     emitter.uses_patches = False
+    emitter.host_syms = {}
     for entry, end in fns:
         lines, r = emitter.function(entry, end)
         body.append('\n'.join(lines))
@@ -518,6 +563,8 @@ def chunk_text(name, number, emitter, fns):
     protos = ''.join(f'void {fname(r)}(Cpu *c);\n' for r in sorted(refs))
     if emitter.uses_patches:
         protos += 'extern uint8_t rt_patch_on[];\n'
+        protos += ''.join(f'extern {t} {s}(Cpu *c);\n'
+                          for s, t in sorted(emitter.host_syms.items()))
     return (header(f'{name} chunk {number:04d}') + '#include "cpu.h"\n#include "simd.h"\n\n' + protos + '\n'
             + '\n\n'.join(body) + '\n')
 

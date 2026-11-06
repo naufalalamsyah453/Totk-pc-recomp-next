@@ -36,7 +36,7 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 0.7 | Clean old account repos (`naufalalamsyah453/totk-pc-recomp`) | done (404, gone) |
 | 1.1 | RE: find TotK 1.4.3 Options screen + option table | done (see "Phase 1 findings") |
 | 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | done (back/close virtual + widget budget = Phase 2 verify) |
-| 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | pending |
+| 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | done (see "Phase 2"; `back` site + widget budget still open) |
 | 3.1 | Runtime: `runtime/ui/game_options.c` (pages, items, cfg bridge) | pending |
 | 3.2 | UTF-16 message injection + `ui_text.c` coverage | pending |
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
@@ -293,20 +293,37 @@ or probe at runtime and fail soft).
 
 ### Phase 2 — Generator host-call hooks
 
-Today `recomp/patches.py` replaces **instruction words**; a replacement may end in `bl` to another guest
-address. SavageWind instead injects **C** (`{ extern void rt_opt_rows(void); rt_opt_rows(); … }`) at lift time.
+**Implemented (2.1 done).** `recomp/patches.py` accepts two host-call tokens as replacement words and
+`recomp/gen.py` emits them (precedent: the `rt_spin_gate` inline call for spin waits):
 
-Approach (pick during implementation, prefer smallest diff):
+- `@host:<symbol>` — `void <symbol>(Cpu *c)` runs where it sits in the word list, then the remaining words
+  (usually the original instruction) run: `@host:s <orig>` = before, `<orig> @host:s` = after. The generator
+  spills the register locals to the Cpu before the hook and reloads them after, so a hook sees current
+  arguments and its Cpu writes reach the code that follows.
+- `@hostif:<symbol>` — `int <symbol>(Cpu *c)` must be the only word of its alternative and must sit at a
+  function's entry (enforced): non-zero means the hook took the guest call over — it did the whole operation,
+  leaves the caller's expected value in `c->x[0]`, and the generator returns from the lifted function; zero runs
+  the original instruction. Entry-only because returning early skips the prologue/epilogue.
+- Constraints (enforced or documented): the original of a `@hostif` site must not write flags; hooks must not
+  touch `c->nzcv`, `c->sp` or x19-x29; prototypes (`extern void/int <symbol>(Cpu *c);`) are emitted per chunk.
 
-1. **Preferred:** extend `recomp/gen.py` with a veneer mechanism: a `site` line may name a host symbol;
-   the emitter writes a tiny generated C stub the guest `bl` reaches (same pattern as existing `rt_spin_gate`
-   for spin waits — precedent already in-tree).
-2. **Alt:** keep pure word patches that branch into a runtime-owned page of guest-callable thunks (more fragile).
+Landed with it:
 
-Deliverable: patches-v143.txt lines + gen/patches.py support for at least:
+- Patch set `opts` = `TOTK_NATIVE_OPTIONS` (default on, `recomp/patches-v143.txt`, index 13 in `patches.h`).
+- Eight site lines, every one the flag-neutral prologue at its function's entry (originals checked against the
+  1.4.3 NSO): `@host` for `rt_opt_screen_open` (`+0x218d58c`), `rt_opt_build_rows` (`+0x218bb10`, carries
+  `flag_type`), `rt_opt_tick` (`+0x218c5c0`), `rt_opt_decide` (`+0x218d274`, may rewrite `c->x[1]` to a
+  sentinel); `@hostif` for `rt_opt_read` (`+0x980288`), `rt_opt_store` (`+0x170210` and `+0x923d20`),
+  `rt_opt_msg_lookup` (`+0xba1730`).
+- Fail-soft stubs in `runtime/native_options.c` (auto-compiled: `tools/build_game.py` globs `runtime/*.c`);
+  Phase 3 fills them in. `reset` has no game site (runtime writes entry defaults), `back` waits for the
+  slot 86/92/98 verify, `screen_open_request` is already `runtime/menu_cursor.c`'s +0x175 bit.
+- Verified: `patches.check` over all 62 main sites against the NSO; the eight hooked functions emitted through
+  the real `Emitter` pass `clang -fsyntax-only`; a full `gen.py --patches` run writes 418/418 chunks (131 s,
+  0 unsupported) with `RT_PATCH_COUNT 14` and the eight `rt_patch_on[13]` sites present in 5 chunk files.
 
-`screen_open_request`, `screen_open`, `build_rows`, `flag_type`, `read`, `store`, `reset`, `msg_lookup`,
-`decide`, `tick`, `back` (+ title/pause tick if page-switch needs reopen).
+SavageWind instead injects **C** (`{ extern void rt_opt_rows(void); rt_opt_rows(); … }`) at lift time; the
+`@host` token is this fork's equivalent inside the existing word-patch machinery.
 
 **1.4.3 hook site map (from Phase 1 findings; `main+0x…`)**
 
