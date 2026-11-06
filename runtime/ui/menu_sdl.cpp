@@ -73,6 +73,7 @@ extern "C" void menu_sdl_event(const SDL_Event *e) {
     }
     case SDL_EVENT_MOUSE_WHEEL:
         if (menu_is_open()) menu_event_wheel(e->wheel.x, e->wheel.y);
+        else menu_cursor_wheel(e->wheel.y);   // the game's own menus: scroll the focused list
         return;
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
     case SDL_EVENT_WINDOW_FOCUS_LOST:

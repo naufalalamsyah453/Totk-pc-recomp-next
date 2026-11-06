@@ -39,8 +39,10 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | done (see "Phase 2"; `back` site + widget budget still open) |
 | 3.1 | Runtime: `runtime/ui/game_options.c` (items, cfg read/store bridge, table swap) | done (gated off by `NATIVE_OPTIONS`; page navigation + messages still open) |
 | 3.2 | UTF-16 message injection + `ui_text.c` coverage | hook written, not yet run in game: key parser, text resolver and `rt_opt_msg_lookup` at `+0xb3e3c0` (contract in "Message apply path"); open assumption is that the text is NUL-terminated UTF-16 with the length in char16 units - the smoke test (4.2) confirms it |
+| 3.3 | Restart tag on the native row titles (`[restart]`) | done - `opt_text_utf8` appends `UI_MENU_RESTART_TAG` for the `!live` keys (HDR, ANISO, OPERATION_MODE, AUDIO_CHANNELS); en, ru, pt-BR and zh-Hans texts added |
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
 | 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | pending |
+| 4.3 | Game-menu scrolling: mouse wheel + L/R | done - `menu_cursor.c` turns the wheel's queued notches (`menu_cursor_wheel`, routed from `menu_win.cpp`/`menu_sdl.cpp` while the F1 menu is closed) and L/R presses into 60 ms d-pad steps with a 40 ms gap, in every non-gameplay focus screen, gated by `TOTK_MENU_CURSOR` |
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
 | 6.1 | Port hooks to 1.2.1 (optional, after 1.4.3 works) | pending |
 | 7.1 | Green CI on main | done (run 42120809154) |
@@ -490,6 +492,10 @@ file under `runtime/ui/` is picked up without generator changes.
   comes from the environment, "after restart" for keys the metas table does not mark live (`ANISO`, `HDR`,
   `OPERATION_MODE`, `AUDIO_CHANNELS`). Checked against `runtime/cfg.c`: all 14 item keys exist and every accepted
   value string matches its metas row.
+- The **title** of such a key (the same four, not one the environment fixes) carries the tag `[restart]`
+  (`UI_MENU_RESTART_TAG`, texts in en, ru, pt-BR and zh-Hans) instead, because the caption's note only shows while
+  the row has the focus: a player sees which rows change only after a restart at a glance, without a row of F1-style
+  colour or layout changes in the game's own screen.
 - **Messages, hook written** (`rt_opt_msg_lookup`, `@hostif` at `main+0xb3e3c0`, see "Message apply path"): for a key of ours it
   fills the out object with a per-key UTF-16 buffer (each title, caption and value has its own buffer that lives for the
   run, in case the pane keeps the pointer instead of copying), the unit count, and a handle of `~0`, then leaves 0 in
@@ -504,6 +510,12 @@ file under `runtime/ui/` is picked up without generator changes.
 
 - Gamepad: native screen already moves `BoxCursor` — no work expected beyond not breaking `menu_cursor.c`.
 - Mouse: existing click→A/B and focus follow should work on native rows; verify after Phase 3.
+- Scrolling (landed): the mouse wheel and L/R scroll any of the game's menus that has the focus box, inventory and
+  title included, through the same `menu_cursor.c` machinery: the window adapters route wheel notches to
+  `menu_cursor_wheel` while the F1 menu is closed, each poll turns queued notches and L/R edges (repeat every 120 ms
+  while held) into one 60 ms d-pad press with 40 ms of release between steps, and the raw L/R are cleared while such
+  a screen is up (the game turns those pages with ZL/ZR). Runs without `input_kbm_last`, so a gamepad player scrolls
+  too; gameplay screens (ability wheel, d-pad strips, map, ...) keep L/R; `TOTK_MENU_CURSOR=0` turns it off.
 - Binding capture (Keyboard/Controller pages): **out of scope for native** (stays F1) per locked scope.
 
 ### Phase 5 — cfg ↔ native mapping

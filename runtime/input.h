@@ -24,9 +24,11 @@ int input_direct_mouse_selector_active(void);
 // counts while leaving the real mouse for menu input. Live counts require cursor capture and foreground focus.
 void input_direct_mouse_sample(int enabled, int32_t *dx, int32_t *dy);
 // menu_cursor.c: the pointer in the game's menus (1.4.3). poll: once per pad read, adds a click's A or B; pointer: a
-// menu has the pointer, so the mouse camera's capture is released
+// menu has the pointer, so the mouse camera's capture is released; wheel: the mouse wheel's notches (dy in notches,
+// positive up) queued from the window thread for the next poll, where they scroll the focused list like the d-pad.
 void menu_cursor_poll(uint64_t *buttons);
 int menu_cursor_pointer(void);
+void menu_cursor_wheel(float dy);
 // The same for host UI (the text entry): never blocked. input_block(1) while a text entry is open: input_poll then
 // reports nothing; input_block(0) when it closes: nothing until all buttons and stick directions are released.
 void input_poll_ui(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);

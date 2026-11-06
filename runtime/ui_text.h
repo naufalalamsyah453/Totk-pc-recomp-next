@@ -20,6 +20,7 @@ typedef enum {
     UI_MENU_CONTINUE, UI_MENU_QUIT,
     UI_MENU_ON, UI_MENU_OFF, UI_MENU_AUTO, UI_MENU_DEFAULT_MARK,      // "default" beside the default value
     UI_MENU_AFTER_RESTART,    // note on a setting that is read at start
+    UI_MENU_RESTART_TAG,      // tag on the title of such a row in the game's Options, so it shows without focusing it
     UI_MENU_SET_BY_ENV,       // note on a setting an environment variable fixes
     UI_MENU_SAVE_FAILED,
     UI_MENU_VERSION,          // "TotK Recomp %s, game %s": the port version and the game update, beside the title

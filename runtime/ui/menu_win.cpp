@@ -76,9 +76,12 @@ extern "C" int menu_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res)
         menu_event_mouse_button(b, down);
         return 0;
     }
-    case WM_MOUSEWHEEL:
-        if (menu_is_open()) menu_event_wheel(0, (float)GET_WHEEL_DELTA_WPARAM(w) / WHEEL_DELTA);
+    case WM_MOUSEWHEEL: {
+        float dy = (float)GET_WHEEL_DELTA_WPARAM(w) / WHEEL_DELTA;   // positive: wheel up
+        if (menu_is_open()) menu_event_wheel(0, dy);
+        else menu_cursor_wheel(dy);   // the game's own menus: scroll the focused list
         return 0;
+    }
     case WM_SETFOCUS:
     case WM_KILLFOCUS:
         menu_event_focus(m == WM_SETFOCUS);

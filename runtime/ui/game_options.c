@@ -184,12 +184,16 @@ static int opt_text_utf8(const char *key, char *out, size_t cap) {
     if (n >= cap) n = cap - 1;
     memcpy(out, text, n);
     out[n] = 0;
-    // The caption carries the same notes the F1 menu appends to a description (option_rows.cpp desc_set): a setting
-    // the environment fixes, or one that is only read at start.
+    // The title and the caption carry the notes the F1 menu shows on a description: a setting the environment fixes,
+    // or one that is only read at start. On a title that note is a short tag in brackets instead, because the caption
+    // only shows while the row has the focus: a player must see at a glance which rows change only after a restart.
     if (k.kind == OPT_MSG_CAPTION) {
         const CfgMeta *m = cfg_meta(it->cfg);
         if (cfg_from_env(it->cfg)) snprintf(out + n, cap - n, "\n\n%s %s", menu_text(UI_MENU_SET_BY_ENV), it->cfg);
         else if (m && !m->live) snprintf(out + n, cap - n, "\n\n%s", menu_text(UI_MENU_AFTER_RESTART));
+    } else if (k.kind == OPT_MSG_TITLE) {
+        const CfgMeta *m = cfg_meta(it->cfg);
+        if (m && !m->live && !cfg_from_env(it->cfg)) snprintf(out + n, cap - n, " [%s]", menu_text(UI_MENU_RESTART_TAG));
     }
     return 1;
 }
