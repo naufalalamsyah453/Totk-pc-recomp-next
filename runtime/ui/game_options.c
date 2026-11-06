@@ -21,6 +21,7 @@
 // ("0"/"1"), so both kinds share one value model - read returns the current value's index, store receives it -
 // and kind only decides how the game's row widget renders (0 = toggle button, 1 = choice with arrows).
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "cfg.h"
@@ -181,6 +182,13 @@ static int opt_text_utf8(const char *key, char *out, size_t cap) {
     if (n >= cap) n = cap - 1;
     memcpy(out, text, n);
     out[n] = 0;
+    // The caption carries the same notes the F1 menu appends to a description (option_rows.cpp desc_set): a setting
+    // the environment fixes, or one that is only read at start.
+    if (k.kind == OPT_MSG_CAPTION) {
+        const CfgMeta *m = cfg_meta(it->cfg);
+        if (cfg_from_env(it->cfg)) snprintf(out + n, cap - n, "\n\n%s %s", menu_text(UI_MENU_SET_BY_ENV), it->cfg);
+        else if (m && !m->live) snprintf(out + n, cap - n, "\n\n%s", menu_text(UI_MENU_AFTER_RESTART));
+    }
     return 1;
 }
 

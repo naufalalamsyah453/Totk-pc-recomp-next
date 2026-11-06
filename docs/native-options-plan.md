@@ -447,6 +447,10 @@ file under `runtime/ui/` is picked up without generator changes.
   turns such a key into UTF-16 from the menu catalog (`ui_text.c`: every Item carries its title, caption and
   per-value catalog ids, so en, ru, pt-BR and zh-Hans already work). Value ids are the value indices, because our
   entries' value array is `[0, 1, ...]`.
+  A caption also carries the notes the F1 menu adds to a description: "set by environment variable" when the key
+  comes from the environment, "after restart" for keys the metas table does not mark live (`ANISO`, `HDR`,
+  `OPERATION_MODE`, `AUDIO_CHANNELS`). Checked against `runtime/cfg.c`: all 14 item keys exist and every accepted
+  value string matches its metas row.
 - **Messages, still open — the hook contract**: `rt_opt_msg_lookup` (`@hostif` at `main+0xba1730`) still returns 0.
   To take the call over it must know which register holds the key string (or the `keyObj` that wraps it) and where
   the UTF-16 result goes, and whether the title/value/caption suffixes (`T_Option_00`, `T_Text_00`, `T_Caption_00`)
