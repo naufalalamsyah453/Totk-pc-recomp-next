@@ -19,7 +19,8 @@
 // every screen change), so a field that moved shows as a menu with no nodes or boxes off the layout.
 //
 // Only while keyboard and mouse are the device used last (input_kbm_last): a gamepad player sees the menus unchanged.
-// The scrolling (mouse wheel and L/R, below) does not ask that: it moves the focused list for a gamepad player too.
+// The wheel scrolling (below) does not ask that: it moves the focused list for a gamepad player too. L and R are left to
+// the game, which turns the inventory's tabs with them.
 // TOTK_MENU_CURSOR (live, default 1): 0 leaves the menus to the keys and the pad, pointer and scrolling included.
 #include <math.h>
 #include <stdint.h>
@@ -255,7 +256,6 @@ int menu_cursor_pointer(void) { return __atomic_load_n(&g_pointer, __ATOMIC_RELA
 #define WHEEL_UNIT 256
 #define WHEEL_MAX 8        // steps queued either way
 #define STEP_GAP_MS 40     // release between two scroll steps
-#define LR_REPEAT_MS 120   // L or R held: the next step
 enum { STEP_IDLE, STEP_PRESS, STEP_GAP };
 static volatile int32_t g_wheel_q;
 
@@ -303,10 +303,10 @@ void menu_cursor_poll(uint64_t *buttons) {
     static int inited, pending_a, held_l, held_r;
     static uint64_t pending_node, pending_until, hold_until, hold_bit;
     static float last_px = -1, last_py = -1;
-    // scrolling: the queued steps, the phase of the step being delivered, the wheel's fraction of a notch and what
-    // L/R held does (game thread only, like the click state)
-    static int step_q, step_state, wheel_frac, lr_held;
-    static uint64_t step_until, lr_repeat_at;
+    // scrolling: the queued steps, the phase of the step being delivered and the wheel's fraction of a notch (game
+    // thread only, like the click state)
+    static int step_q, step_state, wheel_frac;
+    static uint64_t step_until;
     if (!inited) {
         inited = 1;
         main_lo = MOD_MAIN_BASE, main_hi = MOD_MAIN_BASE + MAIN_SIZE;
@@ -315,7 +315,7 @@ void menu_cursor_poll(uint64_t *buttons) {
     if (!enabled()) {
         set_pointer(0);
         __atomic_store_n(&g_wheel_q, 0, __ATOMIC_RELAXED);
-        step_q = 0, step_state = STEP_IDLE, lr_held = 0;
+        step_q = 0, step_state = STEP_IDLE;
         return;
     }
     Focus f = focus_now();
@@ -323,7 +323,7 @@ void menu_cursor_poll(uint64_t *buttons) {
     if (f.screen) layout_name(f.screen, nm, sizeof nm);
     // With the gamepad as the last device the menus stay as they are on the console: no pointer, the capture kept.
     // Moving the mouse (or a key) makes keyboard and mouse the last device and the pointer comes. Scrolling does not
-    // wait for that: the wheel and L/R move the focused list for a gamepad player too.
+    // wait for that: the wheel moves the focused list for a gamepad player too.
     int list = f.screen && !gameplay_screen(nm) && ikb_foreground();
     int menu = list && input_kbm_last();
     set_pointer(menu);
@@ -332,23 +332,14 @@ void menu_cursor_poll(uint64_t *buttons) {
     held_l = l, held_r = r;
     uint64_t now = plat_now_ms();
 
-    // ---- scrolling: the wheel's queued notches and L/R become one 60 ms press of a d-pad bit apiece (L and a notch
-    // up scroll up), carried by the hold below, with STEP_GAP_MS of release between steps: a bit the game sees held
-    // across two of its reads would count once for its own key repeat. The raw L/R are cleared while a list has the
-    // focus: the game turns its menu pages with ZL/ZR and has no use for L/R on them.
+    // ---- scrolling: the wheel's queued notches become one 60 ms press of a d-pad bit apiece (a notch up scrolls up),
+    // carried by the hold below, with STEP_GAP_MS of release between steps: a bit the game sees held across two of its
+    // reads would count once for its own key repeat. L and R are not touched: the game turns the inventory's tabs and
+    // the other menu pages with them, so they reach it as the player pressed them.
     if (!list) {
         __atomic_store_n(&g_wheel_q, 0, __ATOMIC_RELAXED);
-        step_q = 0, step_state = STEP_IDLE, lr_held = 0;
+        step_q = 0, step_state = STEP_IDLE;
     } else {
-        int wl = *buttons >> B_L & 1, wr = *buttons >> B_R & 1, held = wl ? 1 : wr ? 2 : 0;
-        if (held != lr_held) {
-            if (held) step_q += held == 1 ? 1 : -1;   // a press takes one step at once (L up, R down)
-            lr_held = held, lr_repeat_at = now + LR_REPEAT_MS;
-        } else if (held && now >= lr_repeat_at) {
-            step_q += held == 1 ? 1 : -1;             // then one more every LR_REPEAT_MS while it is held
-            lr_repeat_at = now + LR_REPEAT_MS;
-        }
-        *buttons &= ~((1ull << B_L) | (1ull << B_R));
         wheel_frac += __atomic_exchange_n(&g_wheel_q, 0, __ATOMIC_RELAXED);
         int n = wheel_frac / WHEEL_UNIT;   // toward zero, so a part notch keeps its sign for the next one
         wheel_frac -= n * WHEEL_UNIT;

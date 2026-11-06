@@ -42,7 +42,7 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 3.3 | Restart tag on the native row titles (`[restart]`) | done - `opt_text_utf8` appends `UI_MENU_RESTART_TAG` for the `!live` keys (HDR, ANISO, OPERATION_MODE, AUDIO_CHANNELS); en, ru, pt-BR and zh-Hans texts added |
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
 | 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | pending |
-| 4.3 | Game-menu scrolling: mouse wheel + L/R | done - `menu_cursor.c` turns the wheel's queued notches (`menu_cursor_wheel`, routed from `menu_win.cpp`/`menu_sdl.cpp` while the F1 menu is closed) and L/R presses into 60 ms d-pad steps with a 40 ms gap, in every non-gameplay focus screen, gated by `TOTK_MENU_CURSOR` |
+| 4.3 | Game-menu scrolling: mouse wheel (L/R stay the game's tab keys) | done - `menu_cursor.c` turns the wheel's queued notches (`menu_cursor_wheel`, routed from `menu_win.cpp`/`menu_sdl.cpp` while the F1 menu is closed) into 60 ms d-pad steps with a 40 ms gap, in every non-gameplay focus screen, gated by `TOTK_MENU_CURSOR`; L and R reach the game untouched |
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
 | 6.1 | Port hooks to 1.2.1 (optional, after 1.4.3 works) | pending |
 | 7.1 | Green CI on main | done (run 42120809154) |
@@ -510,12 +510,14 @@ file under `runtime/ui/` is picked up without generator changes.
 
 - Gamepad: native screen already moves `BoxCursor` — no work expected beyond not breaking `menu_cursor.c`.
 - Mouse: existing click→A/B and focus follow should work on native rows; verify after Phase 3.
-- Scrolling (landed): the mouse wheel and L/R scroll any of the game's menus that has the focus box, inventory and
-  title included, through the same `menu_cursor.c` machinery: the window adapters route wheel notches to
-  `menu_cursor_wheel` while the F1 menu is closed, each poll turns queued notches and L/R edges (repeat every 120 ms
-  while held) into one 60 ms d-pad press with 40 ms of release between steps, and the raw L/R are cleared while such
-  a screen is up (the game turns those pages with ZL/ZR). Runs without `input_kbm_last`, so a gamepad player scrolls
-  too; gameplay screens (ability wheel, d-pad strips, map, ...) keep L/R; `TOTK_MENU_CURSOR=0` turns it off.
+- Scrolling (landed): the mouse wheel scrolls any of the game's menus that has the focus box, inventory and title
+  included, through the same `menu_cursor.c` machinery: the window adapters route wheel notches to
+  `menu_cursor_wheel` while the F1 menu is closed, and each poll turns queued notches into one 60 ms d-pad press with
+  40 ms of release between steps. Runs without `input_kbm_last`, so a gamepad player scrolls too;
+  `TOTK_MENU_CURSOR=0` turns it off. L and R are left alone: a first version cleared them in menus and turned them
+  into row steps, which broke the inventory's tab switching (the player's requirement is that L/R keep switching the
+  inventory tabs), so they reach the game as pressed. The Options page tabs will take L/R the same way the game's
+  tabs do.
 - Binding capture (Keyboard/Controller pages): **out of scope for native** (stays F1) per locked scope.
 
 ### Phase 5 — cfg ↔ native mapping
