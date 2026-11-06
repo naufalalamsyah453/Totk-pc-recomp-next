@@ -37,8 +37,8 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 1.1 | RE: find TotK 1.4.3 Options screen + option table | done (see "Phase 1 findings") |
 | 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | done (back/close virtual + widget budget = Phase 2 verify) |
 | 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | done (see "Phase 2"; `back` site + widget budget still open) |
-| 3.1 | Runtime: `runtime/ui/game_options.c` (pages, items, cfg bridge) | pending |
-| 3.2 | UTF-16 message injection + `ui_text.c` coverage | pending |
+| 3.1 | Runtime: `runtime/ui/game_options.c` (items, cfg read/store bridge, table swap) | done (gated off by `NATIVE_OPTIONS`; page navigation + messages still open) |
+| 3.2 | UTF-16 message injection + `ui_text.c` coverage | pending (row titles/values read blank until this lands) |
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
 | 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | pending |
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
@@ -230,9 +230,42 @@ dispatch table) → `main+0x9ea500` (bgyml path, stride 0x28).
 | option-id string tables | `main+0x3718e48` (`UseAmiibo`), `main+0x3714de0` (`EnableWarpLargeDungeonWind`) |
 | table singleton (ptr at +0x5e8) | `main+0x3a82e70` |
 
-Entry (interim, from row-copy and refresh code): `+0x0` option id (copied to row+0x48),
-`+0x4` kind (0/1/2), `+0x8` default candidate (→ row+0x50), `+0x10` choice count, `+0x20` value
-type (→ row+0x54).
+**Table struct (confirmed from the loader, `main+0x9ea500`, and `count`/`entry`)** — object at
+singleton `main+0x3a82e70` → `+0x5e8` = table pointer:
+
+| table | meaning |
+|---|---|
+| `+0x0` | u32 raw entry count |
+| `+0x8` | entries pointer (stride **0x28**) |
+
+Entry (0x28 bytes, confirmed from `entry(i)` `main+0x2089cb4`, `count` `main+0x2089c14` and the
+row-copy code):
+
+| entry | meaning |
+|---|---|
+| `+0x0` | option id (compared by `entry-by-id` `main+0x2089d90`, copied to row+0x48 / row+0x2c) |
+| `+0x4` | kind: 0 = toggle, 1 = choice, 2 = button |
+| `+0x8` | default candidate (→ row+0x50 / row+0x30) |
+| `+0x10` | choice count (kind-1 cycle modulus) |
+| `+0x18` | value-array pointer (kind-1 candidate values) |
+| `+0x20` | **per-option value key (u32)** — the `w3` argument read/store receive (→ row+0x54 / row+0x30) |
+| `+0x24` | condition/filter flag (0 = always shown) |
+
+**Display order / rows (confirmed)**: there is **no separate order or rows array** — unlike the
+BOTW reference (`OPT_ORDER`/`OPT_ROWS`). Display order is the table array order; the visible row
+count is `count()`'s filtered result. `count(table)` `main+0x2089c14` counts every entry with
+`+0x24 == 0` and gates `+0x24 != 0` through predicate `main+0xb4bf84` (an availability check, not a
+section/page filter). A **page** is therefore a host-built ordered entry array swapped into table
+`+0x8` with its length in `+0x0`.
+
+**Hook argument contract (confirmed)**: `read` (`main+0x980288`) is called as
+`read(context, out=x1, binding=x2, w3=row+0x54=entry+0x20)`; kind-0 `store` (`main+0x923d20`) as
+`store(context, w1=ldrb widget+0x89, x2=binding, w3=row+0x30=entry+0x20)`; kind-1 `store`
+(`main+0x170210`) as `store(context, w1=value, x2=binding, w3=row+0x54=entry+0x20)`. So both hooks
+key on **`c->w[3] == our item key`**, with the value in `w1` (store) or written to the out buffer
+at `x1` (read). The binding comes from `main+0x3cffe8(context, &binding, 0x834d9d9e)`, a 0x50-byte
+record at context+0xc18. Read's out-buffer element type (u32 vs struct) is not yet verified — assume
+u32 and validate at smoke test.
 
 **Row build / msg / decide (main_0293.c + main_0297.c)**
 
@@ -284,12 +317,30 @@ default value), `+0x54` entry+0x20 (value type, passed to read/write).
 **Reset**: no dedicated function or UI string exists in the game's screen — the native UI implements
 reset by writing entry defaults (candidate: entry+0x8).
 
+**`build_rows` (slot84 `main+0x218bb10`, prologue `d102c3ff` = `sub sp,sp,#0xb0`) — confirmed**:
+allocates a kind-2 list (0x38) → screen+0x1a8; loads the table via `adrp 0x7003a82e70` +
+`ldr [x8,#0x5e8]`; `bl count`; allocates the entry list `count`×8 → screen+0x1e0 (count) /
++0x1e8 (ptr) as `{u32 kind, u32 row_index_within_kind}`; a per-kind switch via jump table
+`0x7002d17458` allocates the kind-0 row array → screen+0x1b0/+0x1b8 and the kind-1 row array →
+screen+0x1c0/+0x1c8; per row it looks the widget up with `snprintf(buf,"Pa_ToggleBtn_%02d",i)` /
+`Pa_SelectBtn_%02d` (fmts `0x7002c47588` / `0x7002c4759a`) then `bl 0x7000406acc`. **`cbz x0` after
+the lookup is a fail-soft null path** — the row object is still allocated without its widget, so an
+index past the layout's instances renders as an invisible row rather than crashing.
+
+**Row object fields (confirmed)** — kind-1 sync `main+0x212bf04` (row x0, entry x1): row+0x48 =
+entry+0x0, row+0x50 = entry+0x8, row+0x54 = entry+0x20, row+0x4c = value index. Kind-0 sync
+`main+0x212c6ac`: row+0x2c = entry+0x0, row+0x30 = entry+0x20. Kind-0/1 decide handlers verify the
+pressed widget against the row's own (`ldr x0,[x8,#0x30]; bl 0x28f7680; cmp x0,x20`).
+
+**Widget budget (strategy decided)**: the layout bgyml (with the real `Pa_ToggleBtn_%02d` instance
+count) sits inside `UI/LayoutArchived` and is not reachable by string scan; RomFS is not extracted.
+So the budget is taken as **the game's original visible entry count** — read `count()`/table `+0x0`
+once at install time, *before* the swap — and every page's row count is clamped to it. That count is
+by construction displayable, and the `cbz` fail-soft backs it up. Spare-widget headroom is a later
+optimisation once the layout is known.
+
 **Remaining Phase 2 verify items**: back/close virtual (candidates among slots 86/92/98); exact eui
-input dispatcher that calls slot45/49 (framework-internal, not required if hooks sit lower);
-**widget budget** — `build_rows` looks up indexed widgets (`Pa_ToggleBtn_%02d`, `Pa_SelectBtn_%02d`)
-from the bgyml layout, so runtime rows are capped by how many instances the layout defines (count
-unknown until the SystemOption layout bgyml is extracted — single-file extraction from the base NSP,
-or probe at runtime and fail soft).
+input dispatcher that calls slot45/49 (framework-internal, not required if hooks sit lower).
 
 ### Phase 2 — Generator host-call hooks
 
@@ -309,15 +360,18 @@ or probe at runtime and fail soft).
 
 Landed with it:
 
-- Patch set `opts` = `TOTK_NATIVE_OPTIONS` (default on, `recomp/patches-v143.txt`, index 13 in `patches.h`).
+- Patch set `opts` = `TOTK_NATIVE_OPTIONS` (`recomp/patches-v143.txt`, index 13 in `patches.h`). The default is
+  **off**: `patches.c` resolves a set's `on` from its cfg meta row first, and `NATIVE_OPTIONS`'s meta default is
+  `"0"`, so with the key unset the sites run the originals and the screen is the game's.
 - Eight site lines, every one the flag-neutral prologue at its function's entry (originals checked against the
   1.4.3 NSO): `@host` for `rt_opt_screen_open` (`+0x218d58c`), `rt_opt_build_rows` (`+0x218bb10`, carries
   `flag_type`), `rt_opt_tick` (`+0x218c5c0`), `rt_opt_decide` (`+0x218d274`, may rewrite `c->x[1]` to a
   sentinel); `@hostif` for `rt_opt_read` (`+0x980288`), `rt_opt_store` (`+0x170210` and `+0x923d20`),
   `rt_opt_msg_lookup` (`+0xba1730`).
-- Fail-soft stubs in `runtime/native_options.c` (auto-compiled: `tools/build_game.py` globs `runtime/*.c`);
-  Phase 3 fills them in. `reset` has no game site (runtime writes entry defaults), `back` waits for the
-  slot 86/92/98 verify, `screen_open_request` is already `runtime/menu_cursor.c`'s +0x175 bit.
+- The hooks live in `runtime/ui/game_options.c` (auto-compiled: `tools/build_game.py`'s `runtime_sources()` globs
+  `ui/*.c` as well as `runtime/*.c`); Phase 3 replaced the Phase 2 fail-soft stubs there with the item table, the
+  table swap and the cfg read/store bridge. `reset` has no game site (runtime writes entry defaults), `back` waits
+  for the slot 86/92/98 verify, `screen_open_request` is already `runtime/menu_cursor.c`'s +0x175 bit.
 - Verified: `patches.check` over all 62 main sites against the NSO; the eight hooked functions emitted through
   the real `Emitter` pass `clang -fsyntax-only`; a full `gen.py --patches` run writes 418/418 chunks (131 s,
   0 unsupported) with `RT_PATCH_COUNT 14` and the eight `rt_patch_on[13]` sites present in 5 chunk files.
@@ -342,24 +396,54 @@ SavageWind instead injects **C** (`{ extern void rt_opt_rows(void); rt_opt_rows(
 | pause/title entry | row build also reachable via `+0x218bb10`; pause screens `+0x21679ec` / `+0x216720c` | |
 
 Rows are fixed layout widgets (`Pa_ToggleBtn_%02d`, `Pa_SelectBtn_%02d`): runtime rows can only fill
-widgets the bgyml defines — verify budget (single-file bgyml extraction or runtime probe) before
-choosing inject-vs-remap strategy.
+widgets the bgyml defines. The instance count is still unknown (layout inside `UI/LayoutArchived`),
+so Phase 3 clamps every page to the game's original visible entry count read at install time — see
+the widget-budget strategy in Phase 1 findings.
 
 ### Phase 3 — Runtime `runtime/ui/game_options.c`
 
 Port the structure of `game_options.mm` to C, wiring to existing totk pieces:
 
 - `Item` table built from `cfg` keys (`cfg_get` / `cfg_set` in `runtime/cfg.c`) for Screen / Game / Sound /
-  Controls only.
+  Controls only. The cfg keys per tab are the ones `runtime/ui/menu.cpp` groups under `tab_screen` /
+  `tab_game` / `tab_sound` / `tab_controls` (they carry the `TOTK_` prefix in the menu; `cfg.c` stores
+  them without it).
 - Pages: main section buttons → section pages; game’s own rows on Controls/Video stay (do not remove them).
 - `g_entries` copy of game table + `g_order` per page; validate count/rows on init (fail soft like SavageWind).
+- **Page mechanism (confirmed)**: no order/rows array in TotK — a page swaps table `+0x8` (host-built
+  ordered entry array) and `+0x0` (its length). `install()` copies the game's entries once, appends
+  ours with synthetic `entry+0x20` keys, and records the pre-swap visible count as the widget budget;
+  `rt_opt_build_rows` writes the current page's array before the original runs.
+- **Hook bodies key on `c->w[3]`** (`entry+0x20`): `rt_opt_read` looks the cfg key up and writes the
+  value to the out buffer at `c->x[1]`; `rt_opt_store` writes `w1` back. Guest memory is read/written
+  through `memcpy` from `(const void *)(uintptr_t)addr` exactly as `menu_cursor.c` does (guest base
+  `MOD_MAIN_BASE`, table singleton `MOD_MAIN_BASE + 0x3a82e70` → `+0x5e8`).
+- **Curated rows, not every key**: `tab_screen` alone draws ~30 rows and cannot fit one page. Each
+  section page shows a curated subset that fits the budget; every cfg key still gets an item-table
+  row documenting native-vs-F1 (the "leave it on F1" rule below).
 - Messages: hook supplies UTF-16; reuse colour tags the game already understands; strings from `ui_text.c`
   where they already exist, new keys added for both en + existing languages (fallback en).
 - Sub-actions that do not fit a row (window size list, restart prompt): either map to a KIND_BUTTON that
   delegates to existing runtime UI, or leave that setting on F1 (document per key in the item table).
 
 Build integration: add the file wherever `runtime/*.c` is listed for `build_game.py` / release runtime lib
-(follow existing menu sources).
+(follow existing menu sources). `runtime_sources()` globs `runtime/*.c` (and `runtime/ui/*.c`), so a new
+file under `runtime/ui/` is picked up without generator changes.
+
+**Landed (Phase 3 foundation)** — `runtime/ui/game_options.c`:
+
+- The 7 `rt_opt_*` hooks moved here from the Phase 2 stub file (`runtime/native_options.c`, deleted); every one
+  is fail-soft and gated on `cfg_bool("TOTK_NATIVE_OPTIONS")`, whose meta default is `"0"`.
+- A curated `Item` table (14 rows across Screen/Game/Sound/Controls) with the accepted value strings; a toggle is
+  a 2-value choice (`"0"`/`"1"`), so both kinds share one model: **read returns the current value's index (u32) to
+  `c->x[1]`, store receives that index in `w1`**, and `w3` (the entry's `+0x20` key) says which item.
+- `rt_opt_build_rows` captures the game's entries once and installs a host array of **our rows first, then a copy
+  of the game's** (so ours sit inside the layout's widget budget), writing it to table `+0x8`/`+0x0`.
+- Our option ids come from `0x8000+i` and value keys from `0x4e000000+i`, ranges the game does not use, so
+  entry-by-id and the read/store dispatch never confuse ours with a game entry.
+- Still open, in order: **messages** (Phase 3.2 — `rt_opt_msg_lookup` returns 0, so injected rows read blank
+  until it supplies UTF-16), then **page navigation** (`rt_opt_decide` + a screen reopen, which would let each
+  section have its own page and stop ours from displacing the game's tail rows).
 
 ### Phase 4 — Input
 
