@@ -52,6 +52,10 @@ jobs:
         shell: pwsh
         run: |
           irm https://astral.sh/uv/install.ps1 | iex
+          # The installer puts uv in ~/.local/bin, which is not on PATH in this step or the later ones.
+          $bin = Join-Path $env:USERPROFILE '.local\bin'
+          $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          $env:PATH = "$bin;$env:PATH"
           uv --version
 
       - name: Python venvs (lifter + extraction tools)
