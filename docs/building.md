@@ -224,6 +224,7 @@ The Deck's GPU (Van Gogh) has no native ASTC, so its textures go through the com
 
 Before a commit:
 
+- `python tools/lifted_fn.py OFFSET...` (from the repo root): prints the lifted function containing each `main+0x...` return address from the hook logs, for reading who calls what.
 - `python tools/check_content.py --staged`: nothing game-derived is staged. CI runs the same check;
   `git config core.hooksPath .githooks` runs it before each local commit.
 - `build\<ver>\totk.exe --selftest`: layout, dispatch table and host-function registry, without game files.
