@@ -20,4 +20,5 @@ int rt_opt_page_arm(int dir);
 void rt_opt_page_commit(void);
 uint64_t rt_opt_desc(void);
 uint64_t rt_opt_closed_gen(void);
+uint64_t rt_opt_dead_screen(void);
 const char *rt_opt_page_name(int p);

@@ -372,11 +372,14 @@ void rt_opt_screen_open(Cpu *c) {
 }
 
 // The screen's destructor body (main+0x218ba60): who tears the Options screen down on B or when its owner closes.
-// The generation counts past teardowns for the page switch: ensure-open early-outs while the dying screen still
-// fills the manager's slot and only sets the descriptor's bits, which leaves the manager inconsistent (the first
-// smoke run's reopen timed out and the next open crashed), so the reopen may start only after this ran.
+// The generation counts past teardowns for the page switch and x0 remembers the dying screen: ensure-open early-outs
+// while that screen still fills the manager's slot (the creation path's entry array) and only sets the descriptor's
+// bits, which leaves the manager inconsistent (the smoke runs' reopen timed out and the next open crashed reading
+// the freed screen), so the reopen may start only once the slot has dropped it - see menu_cursor.c.
+static uint64_t g_dead_screen;
 void rt_opt_screen_close(Cpu *c) {
     g_closed_gen++;
+    g_dead_screen = c->x[0];
     if (!enabled()) return;
     log_callers("screen destroyed", c);
 }
@@ -391,6 +394,7 @@ int rt_opt_page_arm(int dir) { return g_next = (g_page + (dir < 0 ? -1 : 1) + NP
 void rt_opt_page_commit(void) { g_page = g_next; g_reopen = 1; }
 uint64_t rt_opt_desc(void) { return g_opt_desc; }
 uint64_t rt_opt_closed_gen(void) { return g_closed_gen; }
+uint64_t rt_opt_dead_screen(void) { return g_dead_screen; }
 const char *rt_opt_page_name(int p) {
     static const int ids[NPAGES] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND, UI_MENU_TAB_CONTROLS};
     return menu_text((UiTextId)ids[(unsigned)p < NPAGES ? p : 0]);
