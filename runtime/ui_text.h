@@ -24,8 +24,6 @@ typedef enum {
     UI_MENU_SET_BY_ENV,       // note on a setting an environment variable fixes
     UI_MENU_SAVE_FAILED,
     UI_MENU_VERSION,          // "TotK Recomp %s, game %s": the port version and the game update, beside the title
-    UI_MENU_PAGE_HINT,        // under a native Options row's caption: how to get back to the categories (ui/game_options.c)
-    UI_MENU_CATEGORY_HINT,    // the caption of a category row on the native Options home: what A does there
 
     // Screen
     UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC,
@@ -36,6 +34,7 @@ typedef enum {
     UI_MENU_PERF_OVERLAY, UI_MENU_PERF_OVERLAY_DESC, UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL,
     UI_PERF_LINE_FPS,
     UI_MENU_GRAPHICS,         // group heading over the resolution rows
+    UI_MENU_SECT_GRAPHICS,    // the Graphics section header of the native Options screen (ui/game_options.c)
     UI_MENU_OUTPUT_RES, UI_MENU_OUTPUT_RES_DESC,
     UI_MENU_RENDER_SCALE, UI_MENU_RENDER_SCALE_DESC, UI_MENU_RENDER_SCALE_GAME,
     UI_MENU_UPSCALER, UI_MENU_UPSCALER_DESC, UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR,

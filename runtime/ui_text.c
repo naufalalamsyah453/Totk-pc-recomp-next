@@ -45,7 +45,6 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_ON] = "On", [UI_MENU_OFF] = "Off", [UI_MENU_AUTO] = "Automatic", [UI_MENU_DEFAULT_MARK] = "default",
     [UI_MENU_AFTER_RESTART] = "after restart", [UI_MENU_RESTART_TAG] = "restart",
     [UI_MENU_SET_BY_ENV] = "set by environment variable",
-    [UI_MENU_PAGE_HINT] = "B goes back to the categories.", [UI_MENU_CATEGORY_HINT] = "A opens this category.",
     [UI_MENU_SAVE_FAILED] = "could not save settings",
     [UI_MENU_VERSION] = "TotK Recomp %s, game %s",
 
@@ -64,6 +63,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     // printf format of the overlay line in FPS mode: the frame rate
     [UI_PERF_LINE_FPS] = "%.0f fps",
     [UI_MENU_GRAPHICS] = "Picture",
+    [UI_MENU_SECT_GRAPHICS] = "Graphics",
     [UI_MENU_OUTPUT_RES] = "Game resolution",
     [UI_MENU_OUTPUT_RES_DESC] = "The size the game draws its picture and interface in. Above 1920 x 1080 the game needs "
                                 "more video memory and GPU time. A wider size (21:9) widens the camera's view and moves "
@@ -509,7 +509,6 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "по умолчанию",
     [UI_MENU_AFTER_RESTART] = "после перезапуска", [UI_MENU_RESTART_TAG] = "рестарт",
     [UI_MENU_SET_BY_ENV] = "задано переменной окружения",
-    [UI_MENU_PAGE_HINT] = "B возвращает к категориям.", [UI_MENU_CATEGORY_HINT] = "A открывает эту категорию.",
     [UI_MENU_SAVE_FAILED] = "не удалось сохранить настройки",
     [UI_MENU_VERSION] = "TotK Recomp %s, игра %s",
 
@@ -529,6 +528,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PERF_OFF] = "Выкл.", [UI_MENU_PERF_FPS] = "FPS", [UI_MENU_PERF_FULL] = "Полный",
     [UI_PERF_LINE_FPS] = "%.0f к/с",
     [UI_MENU_GRAPHICS] = "Изображение",
+    [UI_MENU_SECT_GRAPHICS] = "Графика",
     [UI_MENU_OUTPUT_RES] = "Разрешение игры",
     [UI_MENU_OUTPUT_RES_DESC] = "Размер, в котором игра рисует картинку и интерфейс. Выше 1920 × 1080 игре нужно больше "
                                 "видеопамяти и времени GPU. Более широкий размер (21:9) расширяет обзор камеры и "
@@ -1008,7 +1008,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "padrão",
     [UI_MENU_AFTER_RESTART] = "após reiniciar", [UI_MENU_RESTART_TAG] = "reinício",
     [UI_MENU_SET_BY_ENV] = "definido por variável de ambiente",
-    [UI_MENU_PAGE_HINT] = "B volta às categorias.", [UI_MENU_CATEGORY_HINT] = "A abre esta categoria.",
     [UI_MENU_SAVE_FAILED] = "não foi possível salvar as configurações",
     [UI_MENU_VERSION] = "TotK Recomp %s, jogo %s",
 
@@ -1028,6 +1027,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PERF_OFF] = "Desligado", [UI_MENU_PERF_FPS] = "FPS", [UI_MENU_PERF_FULL] = "Completo",
     [UI_PERF_LINE_FPS] = "%.0f fps",
     [UI_MENU_GRAPHICS] = "Imagem",
+    [UI_MENU_SECT_GRAPHICS] = "Gráficos",
     [UI_MENU_OUTPUT_RES] = "Resolução do jogo",
     [UI_MENU_OUTPUT_RES_DESC] = "O tamanho em que o jogo desenha a imagem e a interface. Acima de 1920 x 1080 o jogo "
                                 "precisa de mais memória de vídeo e tempo de GPU. Um tamanho mais largo (21:9) amplia a "
@@ -1508,7 +1508,6 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "默认",
     [UI_MENU_AFTER_RESTART] = "重启后生效", [UI_MENU_RESTART_TAG] = "重启",
     [UI_MENU_SET_BY_ENV] = "由环境变量设定",
-    [UI_MENU_PAGE_HINT] = "按 B 返回分类。", [UI_MENU_CATEGORY_HINT] = "按 A 打开此分类。",
     [UI_MENU_SAVE_FAILED] = "无法保存设置",
     [UI_MENU_VERSION] = "TotK Recomp %s，游戏 %s",
     [UI_MENU_FULLSCREEN] = "全屏",
@@ -1536,6 +1535,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_PERF_LINE_FPS] = "%.0f fps",
 
     [UI_MENU_GRAPHICS] = "画面",
+    [UI_MENU_SECT_GRAPHICS] = "图形",
     [UI_MENU_OUTPUT_RES] = "游戏分辨率",
     [UI_MENU_OUTPUT_RES_DESC] = "游戏绘制画面和界面的尺寸。"
                                 "高于 1920 x 1080 会占用更多显存和 GPU 时间。"

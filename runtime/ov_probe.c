@@ -796,7 +796,7 @@ static void probe_swkbd(void) {
     uint64_t b;
     int32_t lx, ly, rx, ry;
     input_poll_ui(&b, &lx, &ly, &rx, &ry);
-    if (!b) input_poll(NULL, &b, &lx, &ly, &rx, &ry);
+    if (!b) input_poll(&b, &lx, &ly, &rx, &ry);
     printf("swkbd: %d of %d cases (arguments from the SDK's MakePreset/SetHeaderText/SetGuideText/SetInitialText; "
            "horse-name limits, disabled keys, cancel 0x29f, default name \"%s\", UTF-8 out, surrogate pairs, number pad, "
            "minimum length, the Win32 window with OK and Cancel)\n", n - bad, n, def);

@@ -6,13 +6,12 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 ## Goal
 
 1. Move the settings out of the Dear ImGui F1 overlay into the game's own Options screen (pause → System →
-   Options), the way SavageWindRecomp does with `runtime/ui/game_options.mm`. The screen opens on a **category
-   home** (choices like Screen / Game / Sound / Controls / Amiibo / Menu / Advanced, not settings rows), and the
-   categories follow the F1 tabs so a player who knows F1 knows the native screen.
-2. **All F1 settings come across natively** (2026-11-07 scope expansion): the six F1 tabs minus Advanced/Mods/
-   Cheats, plus a new native **Advanced page that holds the Advanced, Mods and Cheats options**, plus **full key
-   binding with press-to-capture** on Controls. What F1 keeps is listed under Non-goals (dynamic pickers and
-   browsing UIs that are not option rows).
+   Options), the way SavageWindRecomp does with `runtime/ui/game_options.mm`. **One page** (decided 2026-11-07, later
+   that day): a header row per section (Screen, Graphics, Sound, Controls, Game), the section's settings under it, then
+   the game's own rows. No home of categories, no page switch, no L/R tabs.
+2. **All F1 settings come across natively except** the Advanced, Mods and Cheats tabs, the key bind tables and
+   their capture, the amiibo browser and the GPU picker, which stay on F1 (see the "Single page" section for why).
+   Sliders become choices over a short list of steps.
 3. F1 stays available behind `F1` as the fallback surface; native rows fail soft (invisible) instead of breaking
    the screen.
 4. **No local builds.** Everything that compiles, tests or packages runs on GitHub Actions.
@@ -22,16 +21,48 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 
 | Decision | Choice |
 |---|---|
-| Scope (2026-11-07 expansion) | Category home + **seven native pages** (Screen, Game, Sound, Controls, Amiibo, Menu, Advanced) holding **all F1 settings**; the Advanced page also holds the Mods and Cheats options; full binding + press-to-capture native. F1 keeps only the Non-goals remainder (dynamic pickers, the mods/cheats/amiibo browsing lists). Supersedes the earlier "core tabs only" lock. |
-| Native home + navigation (2026-11-07) | The screen opens on the category home (choices, no settings rows). A on a category → its page; B on a page → back to the home with the focus on the category just left; B on the home → close the screen. **No L/R quick tab change** (2026-11-07, player decision): L and R are masked out of the Options screen's pad reads, so only the manual path home → category → home exists. |
-| Binding + capture (2026-11-07) | Full bind rows with press-to-capture **in the native screen** (supersedes "capture stays F1"): the capture reuses `input_capture` / `input_map_*` from `runtime/ui/binds_page.cpp` behind a new `extern "C"` API. |
-| Advanced page (2026-11-07) | A native Advanced page contains the Advanced, Mods and Cheats **options** (supersedes "Advanced stays F1"): static options always; the dynamic per-mod / per-cheat lists get native rows only as far as the widget budget fits (the rest stays on F1). |
+| Scope (2026-11-07, single page) | **One native page**: 5 sections (Screen, Graphics, Sound, Controls, Game) holding every F1 setting of the Screen, Game, Sound, Controls and Menu tabs except the dynamic pickers and bind tables. Advanced, Mods, Cheats, Amiibo and binding capture stay on F1. Supersedes the category home and the seven pages. |
+| Navigation (2026-11-07, single page) | None of our own: the screen is the game's Options screen with a longer list; the game's own scrolling, B and (untouched) L/R apply. Supersedes the category home, the per-page B and the L/R tabs. |
+| Binding + capture | Not native for now (reverts the 2026-11-07 expansion): the bind tables and the press-to-capture flow stay on F1 (`runtime/ui/binds_page.cpp`). |
+| Advanced page | Not native for now (reverts the 2026-11-07 expansion): Advanced, Mods and Cheats stay on F1. |
 | Game version (RE first) | **1.4.3 only** (`patches-v143.txt`). 1.2.1 / 1.1.0 later. |
 | Repo | Personal fork `naufalalamsyah453/Totk-pc-recomp-next`, based on upstream `valentderah/totk-pc-recomp` main. |
 | Build location | **GitHub Actions only** — no local compile, lift or release packaging. |
 | Releases | Tag `v*` → automatic Windows `TotK-Setup-…-windows.zip` on GitHub Releases. |
-| Page switch (native Options) | Close = one injected B into the buttons word (the game's own close chain) for A on a category row, the player's own B on a page; reopen = `rt_call(f_70009db288)` on the descriptor captured at screen creation - the sanctioned `rt_call` fallback, because the A-press reopen write field was not identified in RE. L/R (Q/R) masked only on layout `SystemOption_00` and otherwise unused there; the focus after B-to-home is restored with queued d-pad Down steps (`menu_cursor.c`, 500 ms after the reopen). |
+| Page switch (native Options) | Removed. The close-and-reopen machinery (injected B, `rt_call(f_70009db288)` once the manager's slot drops the dying screen) was written and then dropped with the pages; "Phase A results" keeps the RE evidence for it. |
 | Plan language | English (AGENTS.md). |
+
+## Single page (2026-11-07, current design)
+
+The native Options screen is **one list**. `runtime/ui/game_options.c` builds it once per opening in `rt_opt_build_rows`:
+for each section a header row, then the section's items, then a copy of the game's own entries. Why this and not pages:
+a page change is a close and a reopen of a screen that is built once per opening, which needed a teardown generation,
+a wait for the manager's slot, a descriptor captured at creation and a pad-read state machine in `menu_cursor.c`. A page
+was also a place for the widget budget to bite per page. A single list needs none of that and the game's own scrolling,
+B and L/R keep working.
+
+- **Rows**: 53 items in 5 sections (Screen 9, Graphics 23, Sound 2, Controls 14, Game 5), `Item` table in
+  `game_options.c`. A header is a toggle row that reads off and ignores a press; its title is the section name between
+  em dashes (`UI_MENU_TAB_SCREEN`, `UI_MENU_SECT_GRAPHICS`, `UI_MENU_TAB_SOUND`, `UI_MENU_TAB_CONTROLS`,
+  `UI_MENU_TAB_GAME`).
+- **Sliders**: a row cycles values, so an F1 slider is a choice over a short list of steps that includes the key's
+  default (`v_*` arrays). A `num` item reads as the step nearest to the stored number, so a value typed into totk.ini
+  still shows and the next press moves off it. Up to `MSG_MAXV` (24) values per item.
+- **Dynamic**: the game language list is filled at install from `ui_text_game_langs` (the build's Mals files).
+- **Behaviour carried over from F1**: choosing a colour preset writes the four colour values and moving one of them makes
+  the preset Custom (`color_follow`); an empty value is the automatic choice and resets the key (`cfg_reset`); the
+  per-stick dead zones fall back to `TOTK_STICK_DEADZONE` while unset.
+- **Saving**: a store writes totk.ini at once (`cfg_save`), because F1's debounced save runs from its own frame loop,
+  which does not run while F1 is closed.
+- **Not native**: Advanced, Mods and Cheats, the bind tables and their capture, the amiibo browser and the GPU picker
+  (needs the Vulkan device list from the F1 side), the window size's "current size" entry. All of these stay on F1.
+- **Open, to confirm in game**: how many rows the Options layout can draw. The probe (3.7) found one template instance
+  per widget kind and the clone loop's capacity is unmeasured; our rows come first, so a layout that is too small hides
+  the game's own rows first, then the tail of ours (fail soft, invisible). If rows past some count do not show, the
+  fix is in the layout (the RomFS overlay archive), not in this list.
+- **Not done**: a warning after a restart-only setting changes (the `[restart]` tag on the title and the caption note
+  exist); a smoother scroll than the d-pad steps the wheel makes.
+
 
 ## Status
 
@@ -515,6 +546,10 @@ Port the structure of `game_options.mm` to C, wiring to existing totk pieces:
   Controls only. The cfg keys per tab are the ones `runtime/ui/menu.cpp` groups under `tab_screen` /
   `tab_game` / `tab_sound` / `tab_controls` (they carry the `TOTK_` prefix in the menu; `cfg.c` stores
   them without it).
+> **Superseded (2026-11-07, later): single page.** The next three bullets (Pages, Page mechanism, Switch) describe the
+> category home and the page switch that were built and then removed; see "Single page" near the top. They stay as the
+> record of the RE the switch rested on.
+
 - Pages (design updated 2026-11-07): a **category home** plus seven pages - Screen, Game, Sound, Controls,
   Amiibo, Menu, Advanced - named like the F1 tabs. The screen opens on the home; A on a category opens its page;
   B on a page returns to the home; B on the home closes the screen; L/R do nothing (masked);
@@ -599,9 +634,8 @@ file under `runtime/ui/` is picked up without generator changes.
   40 ms of release between steps. Runs without `input_kbm_last`, so a gamepad player scrolls too;
   `TOTK_MENU_CURSOR=0` turns it off. L and R are left alone: a first version cleared them in menus and turned them
   into row steps, which broke the inventory's tab switching (the player's requirement is that L/R keep switching the
-  inventory tabs), so they reach the game as pressed - except on the native Options screen, where they are now the
-  page tabs (3.4): masked there only, Q/R on the keyboard, and every other screen keeps them. The wheel does not
-  turn pages.
+  inventory tabs), so they reach the game as pressed on every screen, the native Options screen included (it has no
+  pages any more).
 - The wheel on the D-pad choosers (landed, 4.4): `gameplay_screen()` keeps the pointer and the clicks out of the
   `ShortCut_00` strip lists (weapon / shield / arrow, horizontal) and the `ShortCutMainItem_00` item ring, but the
   wheel has its own gate and reaches those two screens: a notch is a 60 ms `B_LEFT`/`B_RIGHT` press on the strips
@@ -625,7 +659,10 @@ Explicit matrix (keep updating this table when keys move):
 | amiibo dir / menu / discord (Amiibo, Menu) | yes (dir row + open-folder action) | the tag browser itself |
 | mods / cheats / advanced / debug (Advanced page) | yes - the static options and action rows (reset, open log, copy info, rebuild); the per-mod / per-cheat lists as far as the budget fits | the dynamic lists past the budget |
 
-### Phase 6 — Scope expansion: category home, seven pages, full coverage (2026-11-07)
+### Phase 6 — Scope expansion: category home, seven pages, full coverage (2026-11-07; superseded by "Single page")
+
+> Superseded the same day: the home, the seven pages, native binding capture and the Advanced page were dropped for one
+> list of the core settings. Kept for the F1 inventory table, which still maps the keys.
 
 Decisions it implements are in the locked table above (home + navigation, binding + capture, Advanced page).
 

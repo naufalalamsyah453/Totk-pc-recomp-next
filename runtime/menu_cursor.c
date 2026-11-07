@@ -20,8 +20,7 @@
 //
 // Only while keyboard and mouse are the device used last (input_kbm_last): a gamepad player sees the menus unchanged.
 // The wheel scrolling (below) does not ask that: it moves the focused list for a gamepad player too. L and R are left to
-// the game, which turns the inventory's tabs with them - except on the native Options screen, where they are the page
-// tabs (menu_cursor_poll, below) and are masked out of the read the game gets there.
+// the game, which turns the inventory's tabs with them.
 // TOTK_MENU_CURSOR (live, default 1): 0 leaves the menus to the keys and the pad, pointer and scrolling included.
 #include <math.h>
 #include <stdint.h>
@@ -36,7 +35,6 @@
 #include "input_wsys.h"
 #include "layout.h"
 #include "platform/platform.h"
-#include "ui/game_options.h"
 
 #define SCREEN_MGR_V143 0x3acf960ull   // eui::ScreenMgr::sInstance
 #define MAIN_SIZE 0x3adf000ull         // main's image (code, data, bss) in 1.4.3
@@ -310,44 +308,8 @@ static void log_screen(const Focus *f, const char *nm, int n, float lw, float lh
            stale ? "stale" : "own", t ? "scaled" : "plain");
 }
 
-// The native Options' views (runtime/ui/game_options.c): the home lists the categories, a page holds the settings of
-// one. While that screen has the focus L and R are masked out of the read the game gets (no quick tab change). A on a
-// category row asks for its page and B on a page goes back to the home, with the focus on the category left; both are
-// a close and a reopen, because the rows are fixed widgets built once per opening. A category's A injects one B press
-// (the game closes the screen through its own path); a page's own B is the player's press and needs no injection. The
-// reopen is an rt_call once the manager's slot has dropped
-// the dying screen - the destructor runs before that (the slot is the entry array ensure-open early-outs on, so a
-// call in between finds the slot full, sets an open request on the descriptor and detonates later on the freed
-// screen), and rt_opt_page_commit has moved the page by then, so the rows are rebuilt for it during that creation.
-// The switch runs only on the game thread's pad reads (the poll's c argument) and defers the pointer, wheel and
-// clicks to itself while it is on. Deadlines are milliseconds; every outcome is one log line, and a failed switch
-// leaves the old page.
-#define OPT_LAYOUT "SystemOption_00"    // the Options screen's layout name (verified in the smoke run's log)
-#define OPT_ENSURE_OPEN 0x9db288ull     // f_70009db288: ensure-open of this screen, idempotent (main_0114.c:6557)
-#define OPT_CLOSE_MS 500                // injected B to the screen gone
-#define OPT_OPEN_MS 2500                // reopen call to the screen back
-#define OPT_SLOT_MS 64                  // the teardown to the manager's pass that drops the slot (a few frames)
-enum { OPT_IDLE, OPT_CLOSE_WAIT, OPT_OPEN_WAIT };
-
-// The manager's screen slot that ensure-open reads: the entry array (holder global main+0x3960000's pointer at
-// +0x158, count at +8, entries at +0x10) where the creation path stores the screen it made (main_0114.c:9db47c
-// writes it, ensure-open early-outs while an entry is set). Free when no entry holds the screen that just died.
-static int opt_slot_free(uint64_t dead) {
-    if (!dead) return 1;
-    uint64_t holder = rd64(MOD_MAIN_BASE + 0x3960000ull + 0x158);
-    if (!ok_at(holder, 0x10)) return 0;
-    uint64_t arrh = rd64(holder);
-    if (!ok_at(arrh, 0x18)) return 0;
-    uint32_t count = rd32(arrh + 8);
-    uint64_t entries = rd64(arrh + 0x10);
-    if (count > 4096 || !ok_at(entries, (uint64_t)count * 8)) return 0;
-    for (uint32_t i = 0; i < count; i++)
-        if (rd64(entries + i * 8) == dead) return 0;
-    return 1;
-}
-
 // Once per pad read on the game thread: the pointer's hover and clicks, as pad buttons (A, B) for this read
-void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
+void menu_cursor_poll(uint64_t *buttons) {
     static int inited, pending_a, held_l, held_r;
     static uint64_t pending_node, pending_until, hold_until, hold_bit;
     static float last_px = -1, last_py = -1;
@@ -355,17 +317,12 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
     // thread only, like the click state)
     static int step_q, step_state, wheel_frac;
     static uint64_t step_until;
-    // the native Options' page switch (below): its state, deadlines and teardown generation, the page it goes to,
-    // the B edge flag, the home focus to restore and the time the teardown was seen
-    static int opt_state, opt_page, opt_prev_b, opt_refocus, refocus_n;
-    static uint64_t opt_until, opt_gen, opt_torn_at, refocus_at;
     if (!inited) {
         inited = 1;
         main_lo = MOD_MAIN_BASE, main_hi = MOD_MAIN_BASE + MAIN_SIZE;
         if (RT_V143) rt_log("menu_cursor: on for 1.4.3 (TOTK_MENU_CURSOR=0 turns it off)");
     }
-    int tabs = c && rt_opt_ready();
-    if (!enabled() && !tabs) {
+    if (!enabled()) {
         set_pointer(0);
         __atomic_store_n(&g_wheel_q, 0, __ATOMIC_RELAXED);
         step_q = 0, step_state = STEP_IDLE;
@@ -376,84 +333,6 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
     if (f.screen) layout_name(f.screen, nm, sizeof nm);
     uint64_t now = plat_now_ms();
 
-    // ---- the native Options' views (docs/native-options-plan.md, Phase 3): the switch described above. The B edge
-    // flag updates on the raw buttons every read, so a B held into the screen or across the close gap never starts a
-    // second switch, and the L/R mask applies to every read while the screen is up.
-    if (tabs) {
-        int is_opt = f.screen && !strcmp(nm, OPT_LAYOUT);
-        int bp = (int)((*buttons >> B_B) & 1);
-        int edge_b = bp && !opt_prev_b;
-        opt_prev_b = bp;
-        if (is_opt) *buttons &= ~((1ull << B_L) | (1ull << B_R));
-        if (opt_state == OPT_IDLE) {
-            int to = -1, inject = 0;
-            if (is_opt) {
-                int cur = rt_opt_page_current(), req = rt_opt_page_request();
-                if (req >= 0 && req != cur) to = req, opt_refocus = -1, inject = 1;   // A on a category row
-                else if (edge_b && cur != 0) to = 0, opt_refocus = cur - 1;           // B on a page: the home again
-            } else {
-                (void)rt_opt_page_request();   // a request from a screen that is gone is stale
-                refocus_n = 0;
-            }
-            if (to >= 0) {
-                opt_page = to;
-                rt_opt_page_goto(to);
-                opt_state = OPT_CLOSE_WAIT, opt_until = now + OPT_CLOSE_MS;
-                opt_gen = rt_opt_closed_gen(), opt_torn_at = 0;
-                if (inject) hold_until = now + 60, hold_bit = 1ull << B_B;   // one B press, carried across reads
-            } else if (is_opt && refocus_n && now >= refocus_at) {
-                step_q = -refocus_n, refocus_n = 0;   // the home's focus box on the category the page came from
-            }
-        } else if (opt_state == OPT_CLOSE_WAIT) {
-            int torn = rt_opt_closed_gen() != opt_gen;   // the destructor ran
-            if (torn && !opt_torn_at) opt_torn_at = now;
-            if (!is_opt) hold_until = 0;                 // the game read the B; holding it further would repeat it
-            if (!is_opt && torn && now >= opt_torn_at + OPT_SLOT_MS &&
-                opt_slot_free(rt_opt_dead_screen())) {
-                uint64_t d = rt_opt_desc();
-                if (d) {
-                    rt_log("native options: %s page: slot free %llums after the teardown, reopening",
-                           rt_opt_page_name(opt_page), (unsigned long long)(now - opt_torn_at));
-                    rt_opt_page_commit();
-                    rt_call(c, MOD_MAIN_BASE + OPT_ENSURE_OPEN, 1, d);
-                    opt_state = OPT_OPEN_WAIT, opt_until = now + OPT_OPEN_MS;
-                } else {
-                    rt_log("native options: %s page: no screen descriptor to reopen with",
-                           rt_opt_page_name(opt_page));
-                    opt_state = OPT_IDLE;
-                }
-            } else if (is_opt && torn) {
-                rt_log("native options: %s page: the screen came back by itself; the page stays",
-                       rt_opt_page_name(opt_page));
-                opt_state = OPT_IDLE;
-            } else if (now >= opt_until) {
-                rt_log("native options: %s page: the screen %s", rt_opt_page_name(opt_page),
-                       is_opt ? "did not close"
-                              : torn ? "closed but the manager's slot still holds it"
-                                     : "closed without running its teardown");
-                opt_state = OPT_IDLE;
-            }
-        } else {   // OPT_OPEN_WAIT: the reopened screen back with the focus box
-            if (is_opt) {
-                rt_log("native options: now on the %s page", rt_opt_page_name(opt_page));
-                if (opt_refocus > 0) refocus_n = opt_refocus, refocus_at = now + 500;
-                opt_state = OPT_IDLE;
-            } else if (now >= opt_until) {
-                rt_log("native options: %s page: the screen did not come back", rt_opt_page_name(opt_page));
-                opt_state = OPT_IDLE;
-            }
-        }
-        if (opt_state != OPT_IDLE) {
-            if (now < hold_until) *buttons |= hold_bit;   // B stays down until the game has read one press
-            return;
-        }
-    }
-    if (!enabled()) {
-        set_pointer(0);
-        __atomic_store_n(&g_wheel_q, 0, __ATOMIC_RELAXED);
-        step_q = 0, step_state = STEP_IDLE;
-        return;
-    }
     // With the gamepad as the last device the menus stay as they are on the console: no pointer, the capture kept.
     // Moving the mouse (or a key) makes keyboard and mouse the last device and the pointer comes. Scrolling does not
     // wait for that: the wheel moves the focused list for a gamepad player too.
