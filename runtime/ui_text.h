@@ -24,7 +24,8 @@ typedef enum {
     UI_MENU_SET_BY_ENV,       // note on a setting an environment variable fixes
     UI_MENU_SAVE_FAILED,
     UI_MENU_VERSION,          // "TotK Recomp %s, game %s": the port version and the game update, beside the title
-    UI_MENU_PAGE_HINT,        // under a native Options row's caption: how to turn the pages (ui/game_options.c)
+    UI_MENU_PAGE_HINT,        // under a native Options row's caption: how to get back to the categories (ui/game_options.c)
+    UI_MENU_CATEGORY_HINT,    // the caption of a category row on the native Options home: what A does there
 
     // Screen
     UI_MENU_FULLSCREEN, UI_MENU_FULLSCREEN_DESC,

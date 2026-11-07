@@ -23,14 +23,14 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | Decision | Choice |
 |---|---|
 | Scope (2026-11-07 expansion) | Category home + **seven native pages** (Screen, Game, Sound, Controls, Amiibo, Menu, Advanced) holding **all F1 settings**; the Advanced page also holds the Mods and Cheats options; full binding + press-to-capture native. F1 keeps only the Non-goals remainder (dynamic pickers, the mods/cheats/amiibo browsing lists). Supersedes the earlier "core tabs only" lock. |
-| Native home + navigation (2026-11-07) | The screen opens on the category home (choices, no settings rows). A on a category → its page; B on a page → back to the home; B on the home → close the screen; L/R (Q/R) still cycle categories fast on a settings page. |
+| Native home + navigation (2026-11-07) | The screen opens on the category home (choices, no settings rows). A on a category → its page; B on a page → back to the home with the focus on the category just left; B on the home → close the screen. **No L/R quick tab change** (2026-11-07, player decision): L and R are masked out of the Options screen's pad reads, so only the manual path home → category → home exists. |
 | Binding + capture (2026-11-07) | Full bind rows with press-to-capture **in the native screen** (supersedes "capture stays F1"): the capture reuses `input_capture` / `input_map_*` from `runtime/ui/binds_page.cpp` behind a new `extern "C"` API. |
 | Advanced page (2026-11-07) | A native Advanced page contains the Advanced, Mods and Cheats **options** (supersedes "Advanced stays F1"): static options always; the dynamic per-mod / per-cheat lists get native rows only as far as the widget budget fits (the rest stays on F1). |
 | Game version (RE first) | **1.4.3 only** (`patches-v143.txt`). 1.2.1 / 1.1.0 later. |
 | Repo | Personal fork `naufalalamsyah453/Totk-pc-recomp-next`, based on upstream `valentderah/totk-pc-recomp` main. |
 | Build location | **GitHub Actions only** — no local compile, lift or release packaging. |
 | Releases | Tag `v*` → automatic Windows `TotK-Setup-…-windows.zip` on GitHub Releases. |
-| Page switch (native Options) | Close = one injected B into the buttons word (the game's own close chain), reopen = `rt_call(f_70009db288)` on the descriptor captured at screen creation - the sanctioned `rt_call` fallback, because the A-press reopen write field was not identified in RE. L/R (Q/R) masked only on layout `SystemOption_00`; pages wrap at both ends. |
+| Page switch (native Options) | Close = one injected B into the buttons word (the game's own close chain) for A on a category row, the player's own B on a page; reopen = `rt_call(f_70009db288)` on the descriptor captured at screen creation - the sanctioned `rt_call` fallback, because the A-press reopen write field was not identified in RE. L/R (Q/R) masked only on layout `SystemOption_00` and otherwise unused there; the focus after B-to-home is restored with queued d-pad Down steps (`menu_cursor.c`, 500 ms after the reopen). |
 | Plan language | English (AGENTS.md). |
 
 ## Status
@@ -517,9 +517,9 @@ Port the structure of `game_options.mm` to C, wiring to existing totk pieces:
   them without it).
 - Pages (design updated 2026-11-07): a **category home** plus seven pages - Screen, Game, Sound, Controls,
   Amiibo, Menu, Advanced - named like the F1 tabs. The screen opens on the home; A on a category opens its page;
-  B on a page returns to the home; B on the home closes the screen; L/R (Q/R) on a settings page switch categories
-  straight (as 3.4 does today). The game's own rows are not removed: they follow every settings page as the tail of
-  that page's view (hidden by the budget if the page is full); the home shows the categories only.
+  B on a page returns to the home; B on the home closes the screen; L/R do nothing (masked);
+  the close and reopen is the machinery 3.4 landed. The game's own rows are not removed: they follow the category rows
+  on the home and every settings page as the tail of that view (hidden by the budget if the view is full).
 - `g_swap` copy of the game table + the per-page views (home view + seven category views); validate count/rows and
   the page boundaries on init (fail soft like SavageWind: a mismatch logs and leaves the screen unswapped).
 - **Page mechanism (landed)**: no order/rows array in TotK - a page swaps table `+0x8` (host-built ordered entry

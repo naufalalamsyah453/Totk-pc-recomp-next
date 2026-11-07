@@ -155,6 +155,15 @@ static int item_by_key(uint32_t key) {
     return -1;
 }
 
+// The category rows of the home view (one per page of settings) are toggle rows that act as buttons: their ids sit
+// right above the items' (the message keys then name them) and their value keys in a block of their own, so read and
+// store tell them apart from an item and from the game's rows. Pressing one asks for its page (rt_opt_page_request).
+#define NCATS 4
+#define CAT_KEY_BASE (ITEM_KEY_BASE + 0x100u)
+static uint32_t cat_id(int p) { return ITEM_ID_BASE + (uint32_t)NITEMS + (uint32_t)p; }
+static uint32_t cat_key(int p) { return CAT_KEY_BASE + (uint32_t)p; }
+static int cat_by_key(uint32_t key) { return key >= CAT_KEY_BASE && key < CAT_KEY_BASE + NCATS ? (int)(key - CAT_KEY_BASE) : -1; }
+
 // ---- the texts of our rows
 //
 // The message key for a row's title, value or caption is built from the option id (runtime/ui/opt_msgkey.h), so an
@@ -162,9 +171,17 @@ static int item_by_key(uint32_t key) {
 // out when key names one of our texts; 0 when the key is not ours or names nothing (a value id past the item's last).
 static int opt_text_utf8(const char *key, char *out, size_t cap) {
     OptMsgKey k;
-    if (!cap || !opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS, &k)) return 0;
-    const Item *it = &items[k.id - ITEM_ID_BASE];
+    if (!cap || !opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS + NCATS, &k)) return 0;
     const char *text = NULL;
+    if (k.id >= ITEM_ID_BASE + (uint32_t)NITEMS) {   // a category row: the page's name, and what A does on it
+        int p = (int)(k.id - ITEM_ID_BASE) - NITEMS;
+        if (k.kind == OPT_MSG_TITLE) text = rt_opt_page_name(p + 1);
+        else if (k.kind == OPT_MSG_CAPTION) text = menu_text(UI_MENU_CATEGORY_HINT);
+        if (!text || !*text) return 0;
+        snprintf(out, cap, "%s", text);
+        return 1;
+    }
+    const Item *it = &items[k.id - ITEM_ID_BASE];
     switch (k.kind) {
     case OPT_MSG_TITLE:
         text = menu_text((UiTextId)it->title);
@@ -223,19 +240,23 @@ static Ent g_swap[MAX_ENTRIES];
 static uint32_t g_our_vals[NITEMS][8];
 static int g_ready;
 
-// The four pages: a page's items are one contiguous run of items[] (the table groups them by page), and a page's
-// view is that run followed by a copy of the game's own entries, so the game's rows stay under every page. All of
-// this is read and written on the game thread - the build hook and menu_cursor.c's page switch run there - so
-// none of it needs atomics.
+// The home and the four pages of settings. A page's items are one contiguous run of items[] (the table groups them
+// by page), and a page's view is that run followed by a copy of the game's own entries, so the game's rows stay
+// under every page. The home (view 0) is the four category rows followed by the game's entries. g_page is the view
+// number: 0 the home, 1..NPAGES the pages. All of this is read and written on the game thread - the build hook and
+// menu_cursor.c's page switch run there - so none of it needs atomics.
 #define NPAGES 4
+#define NVIEWS (NPAGES + 1)
 static const int page_at[NPAGES + 1] = {0, 7, 9, 10, NITEMS};   // item index where each page starts
 static const char *const page_first[NPAGES] = {
     "TOTK_FULLSCREEN", "TOTK_ASSUME_FOCUS", "TOTK_AUDIO_CHANNELS", "TOTK_MOTION",
 };   // the first item of each page; install checks the boundaries against these
-static Ent g_views[NPAGES][MAX_ENTRIES];
-static uint32_t g_vc[NPAGES];      // a page's view length
-static int g_page;                 // the page the rows are built for
-static int g_next;                 // the page an armed switch goes to
+static Ent g_views[NVIEWS][MAX_ENTRIES];
+static uint32_t g_vc[NVIEWS];      // a view's length
+static uint32_t g_cat_vals[2] = {0, 1};
+static int g_page;                 // the view the rows are built for
+static int g_next;                 // the view a switch in progress goes to
+static int g_req = -1;             // the view a category row asked for; taken by rt_opt_page_request
 static int g_reopen;               // a switch's reopen is being created: keep g_page
 static uint64_t g_opt_desc;        // the screen's descriptor, captured when the screen is created
 static uint64_t g_closed_gen;      // bumped by every teardown; a page switch's reopen waits for it
@@ -280,11 +301,24 @@ static int install(uint64_t table) {
         e->cond = 0;   // always shown: count() counts it without the predicate
     }
     memcpy(g_swap + NITEMS, (const void *)(uintptr_t)ge, (size_t)gn * sizeof(Ent));
+    // the home: one toggle row per category, then the game's own entries
+    uint32_t hn = 0;
+    for (int p = 0; p < NCATS; p++) {
+        Ent *e = &g_views[0][hn++];
+        memset(e, 0, sizeof *e);
+        e->id = cat_id(p);
+        e->kind = 0;
+        e->nvals = 2;
+        e->vals = (uint64_t)(uintptr_t)g_cat_vals;
+        e->key = cat_key(p);
+    }
+    memcpy(g_views[0] + hn, g_swap + NITEMS, (size_t)gn * sizeof(Ent));
+    g_vc[0] = hn + gn;
     for (int p = 0; p < NPAGES; p++) {
         uint32_t n = 0;
-        for (int i = page_at[p]; i < page_at[p + 1]; i++) g_views[p][n++] = g_swap[i];
-        memcpy(g_views[p] + n, g_swap + NITEMS, (size_t)gn * sizeof(Ent));
-        g_vc[p] = n + gn;
+        for (int i = page_at[p]; i < page_at[p + 1]; i++) g_views[p + 1][n++] = g_swap[i];
+        memcpy(g_views[p + 1] + n, g_swap + NITEMS, (size_t)gn * sizeof(Ent));
+        g_vc[p + 1] = n + gn;
     }
     g_ready = 1;
     return 1;
@@ -320,7 +354,7 @@ void rt_opt_build_rows(Cpu *c) {
     uint64_t table = opt_table();
     if (!table) return;
     if (!g_ready && !install(table)) return;
-    int p = (unsigned)g_page < NPAGES ? g_page : 0;
+    int p = (unsigned)g_page < NVIEWS ? g_page : 0;
     wr64(table + TBL_ENTRIES, (uint64_t)(uintptr_t)g_views[p]);
     wr32(table + TBL_COUNT, g_vc[p]);
 }
@@ -329,6 +363,11 @@ void rt_opt_build_rows(Cpu *c) {
 // the game look the option up. out (c->x[1]) is where the caller expects a u32.
 int rt_opt_read(Cpu *c) {
     if (!enabled()) return 0;
+    if (cat_by_key((uint32_t)c->x[3]) >= 0) {   // a category row is a button: always "off"
+        wr32((uint64_t)c->x[1], 0);
+        c->x[0] = 1;
+        return 1;
+    }
     int i = item_by_key((uint32_t)c->x[3]);
     if (i < 0) return 0;
     const Item *it = &items[i];
@@ -348,6 +387,12 @@ int rt_opt_read(Cpu *c) {
 // back through the item's values and store it in cfg.
 int rt_opt_store(Cpu *c) {
     if (!enabled()) return 0;
+    int cat = cat_by_key((uint32_t)c->x[3]);
+    if (cat >= 0) {   // A on a category row: ask for its page; menu_cursor.c closes and reopens the screen on it
+        g_req = cat + 1;
+        c->x[0] = 1;
+        return 1;
+    }
     int i = item_by_key((uint32_t)c->x[3]);
     if (i < 0) return 0;
     const Item *it = &items[i];
@@ -385,19 +430,34 @@ void rt_opt_screen_close(Cpu *c) {
 }
 
 // ---- the page switch (menu_cursor.c drives it on the game thread's pad reads)
-// ready: the tabs may run at all (the feature is on, on the version it is patched for). arm takes the target page
-// from dir (-1/+1, wrapped) and returns it; commit moves the built-for page there and marks the next creation as
-// a switch's reopen; desc is the descriptor the reopen calls ensure-open with (0 before the first open); closed-gen
-// is the teardown counter the reopen waits on (see rt_opt_screen_close); name is the page's tab text for the log.
+// The screen shows one view at a time: the home (0) with a row per category, or a page of settings (1..NPAGES). A on a
+// category row asks for its page (request); B on a page goes back to the home. Either way the screen is closed (the
+// game's own B path) and reopened with the target view, because the rows are fixed widgets built once per opening.
+// L and R do nothing here: menu_cursor.c masks them out of the screen's pad reads.
+//   ready:   the switch may run at all (the feature is on, on the version it is patched for).
+//   request: the view a category row asked for since the last call, or -1; it is consumed.
+//   current: the view the open screen shows.
+//   goto:    names the view a switch in progress ends on; commit moves the built-for view there and marks the next
+//            creation as a switch's reopen.
+//   desc:    the descriptor the reopen calls ensure-open with (0 before the first open).
+//   closed-gen / dead-screen: the teardown counter and the dying screen, see rt_opt_screen_close.
+//   name:    the view's text for the log and the category rows: a page's tab name; the home reads like the Menu tab.
 int rt_opt_ready(void) { return RT_V143 && enabled(); }
-int rt_opt_page_arm(int dir) { return g_next = (g_page + (dir < 0 ? -1 : 1) + NPAGES) % NPAGES; }
+int rt_opt_page_request(void) {
+    int r = g_req;
+    g_req = -1;
+    return r;
+}
+int rt_opt_page_current(void) { return g_page; }
+void rt_opt_page_goto(int v) { g_next = (unsigned)v < NVIEWS ? v : 0; }
 void rt_opt_page_commit(void) { g_page = g_next; g_reopen = 1; }
 uint64_t rt_opt_desc(void) { return g_opt_desc; }
 uint64_t rt_opt_closed_gen(void) { return g_closed_gen; }
 uint64_t rt_opt_dead_screen(void) { return g_dead_screen; }
-const char *rt_opt_page_name(int p) {
-    static const int ids[NPAGES] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND, UI_MENU_TAB_CONTROLS};
-    return menu_text((UiTextId)ids[(unsigned)p < NPAGES ? p : 0]);
+const char *rt_opt_page_name(int v) {
+    static const int ids[NVIEWS] = {UI_MENU_TAB_MENU, UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND,
+                                    UI_MENU_TAB_CONTROLS};
+    return menu_text((UiTextId)ids[(unsigned)v < NVIEWS ? v : 0]);
 }
 
 // Row population (main+0x218c5c0, slot 88): runs once per opening, after the rows exist and before their texts are
@@ -439,7 +499,7 @@ void rt_opt_decide(Cpu *c) {
 // call, so a language change shows up the next time the screen builds its rows.
 #define MSG_UNITS 512
 #define MSG_MAXV 8
-enum { MSG_SLOTS = NITEMS * (2 + MSG_MAXV) };
+enum { MSG_SLOTS = (NITEMS + NCATS) * (2 + MSG_MAXV) };
 static uint16_t g_msg[MSG_SLOTS][MSG_UNITS];
 
 // Slot of a parsed key: title and caption of each item first, then its values.
@@ -490,7 +550,7 @@ int rt_opt_msg_lookup(Cpu *c) {
     key[n] = 0;
 
     OptMsgKey k;
-    if (!opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS, &k)) {
+    if (!opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS + NCATS, &k)) {
         log_title_key(key, c->x[30] - MOD_MAIN_BASE);
         return 0;
     }

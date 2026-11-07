@@ -310,9 +310,12 @@ static void log_screen(const Focus *f, const char *nm, int n, float lw, float lh
            stale ? "stale" : "own", t ? "scaled" : "plain");
 }
 
-// The native Options' pages (runtime/ui/game_options.c): while that screen has the focus, L and R are the page
-// tabs and are masked out of the read the game gets; a rising edge switches pages by injecting one B press (the
-// game closes the screen through its own path) and reopening it with rt_call once the manager's slot has dropped
+// The native Options' views (runtime/ui/game_options.c): the home lists the categories, a page holds the settings of
+// one. While that screen has the focus L and R are masked out of the read the game gets (no quick tab change). A on a
+// category row asks for its page and B on a page goes back to the home, with the focus on the category left; both are
+// a close and a reopen, because the rows are fixed widgets built once per opening. A category's A injects one B press
+// (the game closes the screen through its own path); a page's own B is the player's press and needs no injection. The
+// reopen is an rt_call once the manager's slot has dropped
 // the dying screen - the destructor runs before that (the slot is the entry array ensure-open early-outs on, so a
 // call in between finds the slot full, sets an open request on the descriptor and detonates later on the freed
 // screen), and rt_opt_page_commit has moved the page by then, so the rows are rebuilt for it during that creation.
@@ -353,9 +356,9 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
     static int step_q, step_state, wheel_frac;
     static uint64_t step_until;
     // the native Options' page switch (below): its state, deadlines and teardown generation, the page it goes to,
-    // the L/R edge flags and the time the teardown was seen
-    static int opt_state, opt_page, opt_prev_l, opt_prev_r;
-    static uint64_t opt_until, opt_gen, opt_torn_at;
+    // the B edge flag, the home focus to restore and the time the teardown was seen
+    static int opt_state, opt_page, opt_prev_b, opt_refocus, refocus_n;
+    static uint64_t opt_until, opt_gen, opt_torn_at, refocus_at;
     if (!inited) {
         inited = 1;
         main_lo = MOD_MAIN_BASE, main_hi = MOD_MAIN_BASE + MAIN_SIZE;
@@ -373,21 +376,33 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
     if (f.screen) layout_name(f.screen, nm, sizeof nm);
     uint64_t now = plat_now_ms();
 
-    // ---- the native Options' pages (docs/native-options-plan.md, Phase 3): the switch described above. The edge
-    // flags update on the raw buttons every read, so an L or R held into the screen or across the close gap never
-    // arms a second switch, and the mask applies to every read while the screen is up.
+    // ---- the native Options' views (docs/native-options-plan.md, Phase 3): the switch described above. The B edge
+    // flag updates on the raw buttons every read, so a B held into the screen or across the close gap never starts a
+    // second switch, and the L/R mask applies to every read while the screen is up.
     if (tabs) {
         int is_opt = f.screen && !strcmp(nm, OPT_LAYOUT);
-        int lp = (int)((*buttons >> B_L) & 1), rp = (int)((*buttons >> B_R) & 1);
-        int edge_l = lp && !opt_prev_l, edge_r = rp && !opt_prev_r;
-        opt_prev_l = lp, opt_prev_r = rp;
+        int bp = (int)((*buttons >> B_B) & 1);
+        int edge_b = bp && !opt_prev_b;
+        opt_prev_b = bp;
         if (is_opt) *buttons &= ~((1ull << B_L) | (1ull << B_R));
         if (opt_state == OPT_IDLE) {
-            if (is_opt && (edge_l || edge_r)) {
-                opt_page = rt_opt_page_arm(edge_r ? 1 : -1);
+            int to = -1, inject = 0;
+            if (is_opt) {
+                int cur = rt_opt_page_current(), req = rt_opt_page_request();
+                if (req >= 0 && req != cur) to = req, opt_refocus = -1, inject = 1;   // A on a category row
+                else if (edge_b && cur != 0) to = 0, opt_refocus = cur - 1;           // B on a page: the home again
+            } else {
+                (void)rt_opt_page_request();   // a request from a screen that is gone is stale
+                refocus_n = 0;
+            }
+            if (to >= 0) {
+                opt_page = to;
+                rt_opt_page_goto(to);
                 opt_state = OPT_CLOSE_WAIT, opt_until = now + OPT_CLOSE_MS;
                 opt_gen = rt_opt_closed_gen(), opt_torn_at = 0;
-                hold_until = now + 60, hold_bit = 1ull << B_B;   // one B press, carried across the game's reads
+                if (inject) hold_until = now + 60, hold_bit = 1ull << B_B;   // one B press, carried across reads
+            } else if (is_opt && refocus_n && now >= refocus_at) {
+                step_q = -refocus_n, refocus_n = 0;   // the home's focus box on the category the page came from
             }
         } else if (opt_state == OPT_CLOSE_WAIT) {
             int torn = rt_opt_closed_gen() != opt_gen;   // the destructor ran
@@ -421,6 +436,7 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
         } else {   // OPT_OPEN_WAIT: the reopened screen back with the focus box
             if (is_opt) {
                 rt_log("native options: now on the %s page", rt_opt_page_name(opt_page));
+                if (opt_refocus > 0) refocus_n = opt_refocus, refocus_at = now + 500;
                 opt_state = OPT_IDLE;
             } else if (now >= opt_until) {
                 rt_log("native options: %s page: the screen did not come back", rt_opt_page_name(opt_page));

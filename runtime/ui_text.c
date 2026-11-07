@@ -45,7 +45,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_ON] = "On", [UI_MENU_OFF] = "Off", [UI_MENU_AUTO] = "Automatic", [UI_MENU_DEFAULT_MARK] = "default",
     [UI_MENU_AFTER_RESTART] = "after restart", [UI_MENU_RESTART_TAG] = "restart",
     [UI_MENU_SET_BY_ENV] = "set by environment variable",
-    [UI_MENU_PAGE_HINT] = "L / R or Q / R changes the page.",
+    [UI_MENU_PAGE_HINT] = "B goes back to the categories.", [UI_MENU_CATEGORY_HINT] = "A opens this category.",
     [UI_MENU_SAVE_FAILED] = "could not save settings",
     [UI_MENU_VERSION] = "TotK Recomp %s, game %s",
 
@@ -509,7 +509,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "по умолчанию",
     [UI_MENU_AFTER_RESTART] = "после перезапуска", [UI_MENU_RESTART_TAG] = "рестарт",
     [UI_MENU_SET_BY_ENV] = "задано переменной окружения",
-    [UI_MENU_PAGE_HINT] = "L / R или Q / R меняют страницу.",
+    [UI_MENU_PAGE_HINT] = "B возвращает к категориям.", [UI_MENU_CATEGORY_HINT] = "A открывает эту категорию.",
     [UI_MENU_SAVE_FAILED] = "не удалось сохранить настройки",
     [UI_MENU_VERSION] = "TotK Recomp %s, игра %s",
 
@@ -1008,7 +1008,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "padrão",
     [UI_MENU_AFTER_RESTART] = "após reiniciar", [UI_MENU_RESTART_TAG] = "reinício",
     [UI_MENU_SET_BY_ENV] = "definido por variável de ambiente",
-    [UI_MENU_PAGE_HINT] = "L / R ou Q / R mudam a página.",
+    [UI_MENU_PAGE_HINT] = "B volta às categorias.", [UI_MENU_CATEGORY_HINT] = "A abre esta categoria.",
     [UI_MENU_SAVE_FAILED] = "não foi possível salvar as configurações",
     [UI_MENU_VERSION] = "TotK Recomp %s, jogo %s",
 
@@ -1508,7 +1508,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_DEFAULT_MARK] = "默认",
     [UI_MENU_AFTER_RESTART] = "重启后生效", [UI_MENU_RESTART_TAG] = "重启",
     [UI_MENU_SET_BY_ENV] = "由环境变量设定",
-    [UI_MENU_PAGE_HINT] = "L / R 或 Q / R 切换页面。",
+    [UI_MENU_PAGE_HINT] = "按 B 返回分类。", [UI_MENU_CATEGORY_HINT] = "按 A 打开此分类。",
     [UI_MENU_SAVE_FAILED] = "无法保存设置",
     [UI_MENU_VERSION] = "TotK Recomp %s，游戏 %s",
     [UI_MENU_FULLSCREEN] = "全屏",
