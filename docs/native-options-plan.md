@@ -5,18 +5,27 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 
 ## Goal
 
-1. Move the core settings tabs (**Screen, Game, Sound, Controls**) out of the Dear ImGui F1 overlay and into the
-   game's own Options screen (pause → System → Options), the way SavageWindRecomp does with
-   `runtime/ui/game_options.mm`.
-2. Keep **Advanced, Mods, Cheats** and free-form binding capture in the existing F1 overlay.
-3. **No local builds.** Everything that compiles, tests or packages runs on GitHub Actions.
-4. **Automatic Windows releases** on version tags (`v*`), published as GitHub Release assets.
+1. Move the settings out of the Dear ImGui F1 overlay into the game's own Options screen (pause → System →
+   Options), the way SavageWindRecomp does with `runtime/ui/game_options.mm`. The screen opens on a **category
+   home** (choices like Screen / Game / Sound / Controls / Amiibo / Menu / Advanced, not settings rows), and the
+   categories follow the F1 tabs so a player who knows F1 knows the native screen.
+2. **All F1 settings come across natively** (2026-11-07 scope expansion): the six F1 tabs minus Advanced/Mods/
+   Cheats, plus a new native **Advanced page that holds the Advanced, Mods and Cheats options**, plus **full key
+   binding with press-to-capture** on Controls. What F1 keeps is listed under Non-goals (dynamic pickers and
+   browsing UIs that are not option rows).
+3. F1 stays available behind `F1` as the fallback surface; native rows fail soft (invisible) instead of breaking
+   the screen.
+4. **No local builds.** Everything that compiles, tests or packages runs on GitHub Actions.
+5. **Automatic Windows releases** on version tags (`v*`), published as GitHub Release assets.
 
 ## Decisions (locked)
 
 | Decision | Choice |
 |---|---|
-| Scope | Core tabs only: Screen, Game, Sound, Controls → native. Advanced / Mods / Cheats / capture lists stay on F1. |
+| Scope (2026-11-07 expansion) | Category home + **seven native pages** (Screen, Game, Sound, Controls, Amiibo, Menu, Advanced) holding **all F1 settings**; the Advanced page also holds the Mods and Cheats options; full binding + press-to-capture native. F1 keeps only the Non-goals remainder (dynamic pickers, the mods/cheats/amiibo browsing lists). Supersedes the earlier "core tabs only" lock. |
+| Native home + navigation (2026-11-07) | The screen opens on the category home (choices, no settings rows). A on a category → its page; B on a page → back to the home; B on the home → close the screen; L/R (Q/R) still cycle categories fast on a settings page. |
+| Binding + capture (2026-11-07) | Full bind rows with press-to-capture **in the native screen** (supersedes "capture stays F1"): the capture reuses `input_capture` / `input_map_*` from `runtime/ui/binds_page.cpp` behind a new `extern "C"` API. |
+| Advanced page (2026-11-07) | A native Advanced page contains the Advanced, Mods and Cheats **options** (supersedes "Advanced stays F1"): static options always; the dynamic per-mod / per-cheat lists get native rows only as far as the widget budget fits (the rest stays on F1). |
 | Game version (RE first) | **1.4.3 only** (`patches-v143.txt`). 1.2.1 / 1.1.0 later. |
 | Repo | Personal fork `naufalalamsyah453/Totk-pc-recomp-next`, based on upstream `valentderah/totk-pc-recomp` main. |
 | Build location | **GitHub Actions only** — no local compile, lift or release packaging. |
@@ -42,13 +51,16 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 3.2 | UTF-16 message injection + `ui_text.c` coverage | hook written, not yet run in game: key parser, text resolver and `rt_opt_msg_lookup` at `+0xb3e3c0` (contract in "Message apply path"); open assumption is that the text is NUL-terminated UTF-16 with the length in char16 units - the smoke test (4.2) confirms it |
 | 3.3 | Restart tag on the native row titles (`[restart]`) | done - `opt_text_utf8` appends `UI_MENU_RESTART_TAG` for the `!live` keys (HDR, ANISO, OPERATION_MODE, AUDIO_CHANNELS); en, ru, pt-BR and zh-Hans texts added |
 | 3.4 | Page navigation: four curated pages, L/R switch by close + reopen | code landed, first smoke run done - per-page views precomputed in `install()` behind a boundary guard, `g_page` reset on a plain open and kept through a switch's reopen, the one-shot machine in `menu_cursor.c` (inject B -> wait closed AND the teardown probe -> commit page -> `rt_call(f_70009db288)` -> wait open, 500/2500 ms fail-soft deadlines, one log line per outcome), L/R masked only on `SystemOption_00`; smoke: open/close, the boundary guard and the row decides ran clean, but the first switch's reopen fired while the dying screen still held the manager's slot (ensure-open early-outs there: no screen came back, the next open crashed in `f_7000863234`) - fixed by waiting on `rt_opt_closed_gen` (the destructor probe) before the `rt_call`, retest pending; the page-name title (A5) is the follow-up from the new `title key` log |
+| 3.5 | Scope expansion: category home + seven pages + full F1 coverage + native binding/capture + Advanced page | decision locked (2026-11-07, questions answered: home nav, six tab-named categories, binding + capture native, Advanced page holds all three); F1 inventory done (`tab_screen` / `tab_game` / `tab_sound` / `tab_controls` / `tab_menu` / `tab_advanced` / `tab_mods` / `cheats_tab.cpp` / `amiibo_page.cpp` / `binds_page.cpp`); RE done for the decide sentinel (`c->x[1]` rewrite, patches line `opts ... @host:rt_opt_decide`), both store sites (`+0x170210` choice, `+0x923d20` toggle) and the widget budget (see 3.7) |
+| 3.6 | Crash fix for the first page switch: wait for the screen's teardown before reopening | code landed (`28b9f76`: `g_closed_gen` bumped in `rt_opt_screen_close`, `rt_opt_closed_gen()` accessor, the machine only commits + `rt_call`s once the screen is really gone, two new outcomes logged); CI green (run 42344338060) and release build 42344409056 done; background install into `C:\TotkRecomp-dev` running, **smoke retest (4.2) pending** |
+| 3.7 | Widget-budget probe: the layout's row widgets | measured (2026-11-07, `budget_probe.py` over `romfs.bin`): `blyt/SystemOption_00.bflyt` defines **one template instance each** `Pa_ToggleBtn_00` / `Pa_SelectBtn_00` / `Pa_AppOptionBtn_00` / `Pa_AmiiboBtn_00`, plus `Pa_ScrollBar_00`, `N_SlideArea_00`, `N_Separator` - the `Pa_` parts are cloned per row at run time (the `Pa_BalloonMessage_00 → _%02d` pattern the ultrawide tool documents), so the budget is the clone loop's capacity, not a bgyml instance list; the plan's conservative clamp stays until the capacity is confirmed by an over-budget smoke run (Controls at 40 rows) |
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
-| 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | pending |
+| 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | run 1 (0.3.10+8f13ceb) and run 2 done - session 1: version, `menu_cursor`, `SystemOption_00` (20 nodes), open/close and six row decides clean, no L/R pressed; session 2: B close worked, the reopen timed out and the next open crashed in `f_7000863234` (ensure-open mid-teardown) - fixed in 3.6; retest of 3.6 plus the new home/categories/capture checklist pending the background install |
 | 4.3 | Game-menu scrolling: mouse wheel (L/R stay the game's tab keys) | done - `menu_cursor.c` turns the wheel's queued notches (`menu_cursor_wheel`, routed from `menu_win.cpp`/`menu_sdl.cpp` while the F1 menu is closed) into 60 ms d-pad steps with a 40 ms gap, in every non-gameplay focus screen, gated by `TOTK_MENU_CURSOR`; L and R reach the game untouched |
-| 5.1 | Map cfg keys → native rows; leave F1 for the rest | pending |
-| 6.1 | Port hooks to 1.2.1 (optional, after 1.4.3 works) | pending |
-| 7.1 | Green CI on main | done (run 42120809154) |
-| 7.2 | First automatic Windows release tag | done - `v0.3.11-test` pre-release (workflow_dispatch, run 42207472902) and `v0.3.10-1` as Latest (tag push, run 42245255950, `TotK-Setup-v0.3.10-1-windows.zip` + `SHA256SUMS.txt`); both built without the optional `GAME_INPUTS_*` secrets |
+| 5.1 | Map cfg keys → native rows; leave F1 for the rest | in progress - scope expanded (3.5): every cfg key of the six tabs, the Advanced page's keys and the bind rows get an item-table row; only the Non-goals remainder (dynamic pickers, browsing lists) stays on F1 |
+| 7.1 | Port hooks to 1.2.1 (optional, after 1.4.3 works) | pending |
+| 0.8 | Green CI on main | done (run 42120809154) |
+| 0.9 | First automatic Windows release tag | done - `v0.3.11-test` pre-release (workflow_dispatch, run 42207472902) and `v0.3.10-1` as Latest (tag push, run 42245255950, `TotK-Setup-v0.3.10-1-windows.zip` + `SHA256SUMS.txt`); both built without the optional `GAME_INPUTS_*` secrets |
 
 ## Background
 
@@ -428,7 +440,8 @@ chains end to end.
   state.
 - **Decision**: close = a B injection into the merged buttons word, reopen = `rt_call` on the ensure-open, both
   driven by one one-shot machine (500 ms close / 2500 ms open deadlines, one log line per outcome, the old page
-  kept on failure); `rt_opt_decide` stays log-only; pages = four per-page table views (Phase 3).
+  kept on failure); `rt_opt_decide` was log-only at 3.4 (Phase 6 arms switches and actions through it); pages =
+  four per-page table views (Phase 3), grown to a home + seven category views in Phase 6.
 
 ### Phase 2 — Generator host-call hooks
 
@@ -483,10 +496,15 @@ SavageWind instead injects **C** (`{ extern void rt_opt_rows(void); rt_opt_rows(
 | `back` | TBD (slots 86/92/98 candidates) | open-request bit +0x175 already known from `menu_cursor.c` |
 | pause/title entry | row build also reachable via `+0x218bb10`; pause screens `+0x21679ec` / `+0x216720c` | |
 
-Rows are fixed layout widgets (`Pa_ToggleBtn_%02d`, `Pa_SelectBtn_%02d`): runtime rows can only fill
-widgets the bgyml defines. The instance count is still unknown (layout inside `UI/LayoutArchived`),
-so Phase 3 clamps every page to the game's original visible entry count read at install time — see
-the widget-budget strategy in Phase 1 findings.
+Rows are drawn from row widgets cloned at run time: `build_rows` looks up `Pa_ToggleBtn_%02d` / `Pa_SelectBtn_%02d`
+by row index and its null check (`cbz`) is fail-soft, so a row past the last clone the code creates renders
+invisible rather than crash. The 2026-11-07 probe (`budget_probe.py`) found `blyt/SystemOption_00.bflyt` defines
+**one template instance each** (`Pa_ToggleBtn_00`, `Pa_SelectBtn_00`, `Pa_AppOptionBtn_00`, `Pa_AmiiboBtn_00`,
+plus `Pa_ScrollBar_00` and `N_SlideArea_00`): the `Pa_` parts are templates the code clones per row, the pattern
+`ultrawide_layout.py` documents for `Pa_BalloonMessage_00`. So the budget is the clone loop's capacity - still
+unmeasured; `install()` puts our rows first in every view (the budget pressure falls on the game's tail first) and
+nothing numeric is clamped beyond `MAX_ENTRIES`, so an over-budget smoke run (Controls at 40 rows) must confirm how
+far the clone loop goes before the pages grow to their full inventory.
 
 ### Phase 3 — Runtime `runtime/ui/game_options.c`
 
@@ -496,31 +514,38 @@ Port the structure of `game_options.mm` to C, wiring to existing totk pieces:
   Controls only. The cfg keys per tab are the ones `runtime/ui/menu.cpp` groups under `tab_screen` /
   `tab_game` / `tab_sound` / `tab_controls` (they carry the `TOTK_` prefix in the menu; `cfg.c` stores
   them without it).
-- Pages (landed): four curated pages - Screen, Game, Sound, Controls - switched with L/R (or Q/R on the keyboard)
-  on the screen itself; the game's own rows are not removed, they follow every page as the tail of that page's view.
-- `g_swap` copy of the game table + `g_views[4]` per page; validate count/rows and the page boundaries on init
-  (fail soft like SavageWind: a mismatch logs and leaves the screen unswapped).
+- Pages (design updated 2026-11-07): a **category home** plus seven pages - Screen, Game, Sound, Controls,
+  Amiibo, Menu, Advanced - named like the F1 tabs. The screen opens on the home; A on a category opens its page;
+  B on a page returns to the home; B on the home closes the screen; L/R (Q/R) on a settings page switch categories
+  straight (as 3.4 does today). The game's own rows are not removed: they follow every settings page as the tail of
+  that page's view (hidden by the budget if the page is full); the home shows the categories only.
+- `g_swap` copy of the game table + the per-page views (home view + seven category views); validate count/rows and
+  the page boundaries on init (fail soft like SavageWind: a mismatch logs and leaves the screen unswapped).
 - **Page mechanism (landed)**: no order/rows array in TotK - a page swaps table `+0x8` (host-built ordered entry
   array) and `+0x0` (its length). `install()` copies the game's entries once, appends ours with synthetic
-  `entry+0x20` keys, and precomputes four views (the page's items, then the game's entries);
-  `rt_opt_build_rows` writes the current `g_page`'s view before the original runs. Rows past the layout's last
-  widget instance fail soft (invisible); the budget itself stays unmeasured until the smoke run.
+  `entry+0x20` keys, and precomputes the views (the home's category rows, or the page's items, then the game's
+  entries on a settings page);
+  `rt_opt_build_rows` writes the current `g_page`'s view before the original runs. Rows past the clone loop's
+  capacity fail soft (invisible); the capacity stays unmeasured until the over-budget smoke run (3.7).
 - **Switch (landed, 3.4)**: `menu_cursor.c` injects one B (the game closes through its own chain), waits for the
   screen to go, commits the page and reopens with `rt_call` on `f_70009db288` (ensure-open, idempotent, on the
   descriptor captured in `rt_opt_screen_open`); `g_reopen` keeps the committed page through that creation and a
   plain open resets to page 0. It runs only on the game thread's pad reads (`Cpu *c` threaded through
-  `input_poll`; host-test callers pass 0 and the tabs stay off). `rt_opt_decide` stays log-only.
+  `input_poll`; host-test callers pass 0 and the tabs stay off). `rt_opt_decide` stays log-only until Phase 6.
 - **Hook bodies key on `c->w[3]`** (`entry+0x20`): `rt_opt_read` looks the cfg key up and writes the
   value to the out buffer at `c->x[1]`; `rt_opt_store` writes `w1` back. Guest memory is read/written
   through `memcpy` from `(const void *)(uintptr_t)addr` exactly as `menu_cursor.c` does (guest base
   `MOD_MAIN_BASE`, table singleton `MOD_MAIN_BASE + 0x3a82e70` → `+0x5e8`).
-- **Curated rows, not every key**: `tab_screen` alone draws ~30 rows and cannot fit one page. Each
-  section page shows a curated subset that fits the budget; every cfg key still gets an item-table
-  row documenting native-vs-F1 (the "leave it on F1" rule below).
+- **Full coverage, budget-capped (2026-11-07, supersedes "curated rows")**: every cfg key of a tab becomes an
+  item-table row on its category's page (`tab_screen` alone draws ~25 rows, Controls ~40 with the bind rows). The
+  widget budget stays the guard: our rows sit first, rows past the capacity render invisible (fail soft), and the
+  over-budget smoke run (3.7) sets how much of each page the screen can actually draw before anything is split.
 - Messages: hook supplies UTF-16; reuse colour tags the game already understands; strings from `ui_text.c`
   where they already exist, new keys added for both en + existing languages (fallback en).
-- Sub-actions that do not fit a row (window size list, restart prompt): either map to a KIND_BUTTON that
-  delegates to existing runtime UI, or leave that setting on F1 (document per key in the item table).
+- Sub-actions that are not plain values (reset all, open log, copy info, restart, the mods folder): map to a new
+  kind whose decide runs the action through `rt_opt_decide` (with the sentinel rewrite, see "Phase 6"); widgets the
+  screen cannot express at all (the window-size / GPU picker lists, the amiibo and mod browsers) stay on F1 and are
+  listed under Non-goals.
 
 Build integration: add the file wherever `runtime/*.c` is listed for `build_game.py` / release runtime lib
 (follow existing menu sources). `runtime_sources()` globs `runtime/*.c` (and `runtime/ui/*.c`), so a new
@@ -576,7 +601,11 @@ file under `runtime/ui/` is picked up without generator changes.
   inventory tabs), so they reach the game as pressed - except on the native Options screen, where they are now the
   page tabs (3.4): masked there only, Q/R on the keyboard, and every other screen keeps them. The wheel does not
   turn pages.
-- Binding capture (Keyboard/Controller pages): **out of scope for native** (stays F1) per locked scope.
+- Binding capture: **in scope for native since 2026-11-07** (supersedes the earlier out-of-scope lock). The bind
+  rows run the same flow as `runtime/ui/binds_page.cpp`: a decide on a bind row arms a capture (5 s window, Esc/B or
+  timeout cancel), `input_capture` polls the devices so any key or pad button lands in the right cell, and
+  `input_map_set_key` / `input_map_set_pad` + `write_lines` keep writing the `TOTK_BIND_*` lines exactly as F1 does.
+  New `extern "C"` entry points in `binds_page.h` (`change()`, the cell labels, `reset`) keep the C side small.
 
 ### Phase 5 — cfg ↔ native mapping
 
@@ -584,13 +613,76 @@ Explicit matrix (keep updating this table when keys move):
 
 | totk.ini / cfg prefix | Native page | F1 only |
 |---|---|---|
-| resolution / fullscreen / vsync / fps / upscaler / … (Screen) | yes (choice/toggle rows) | GPU picker lists if too dynamic |
+| resolution / fullscreen / vsync / fps / upscaler / … (Screen) | yes (choice/toggle/slider rows) | window-size / GPU picker lists (dynamic, see Non-goals) |
 | camera / hud / gameplay toggles (Game) | yes | |
 | volume / audio toggles (Sound) | yes | |
-| gyro / deadzone / button icons (Controls) | yes where KIND_TOGGLE/CHOICE | full bind tables |
-| mods / cheats / advanced / debug | — | yes (F1) |
+| gyro / deadzone / button icons / **bind tables + capture** (Controls) | yes (bind rows are kind rows whose decide runs capture) | |
+| amiibo dir / menu / discord (Amiibo, Menu) | yes (dir row + open-folder action) | the tag browser itself |
+| mods / cheats / advanced / debug (Advanced page) | yes - the static options and action rows (reset, open log, copy info, rebuild); the per-mod / per-cheat lists as far as the budget fits | the dynamic lists past the budget |
 
-### Phase 6 — Other versions (after 1.4.3 works)
+### Phase 6 — Scope expansion: category home, seven pages, full coverage (2026-11-07)
+
+Decisions it implements are in the locked table above (home + navigation, binding + capture, Advanced page).
+
+**F1 inventory (what comes across)**
+
+| F1 tab | Rows | Native target |
+|---|---|---|
+| `tab_screen` (`menu.cpp:653`) | ~25: fullscreen, vsync, perf overlay, upscaler, sharpness, aspect, fov, aniso, pcss, contact shadows, DLAA, DLSS (+preset, char mask), FXAA, HDR (+peak/game/ui nits, hue), colour preset (+4), window size, output res, render scale, shadow res/scale/range, gpu index, game lang | Screen page (dynamic pickers stay F1) |
+| `tab_game` (`menu.cpp:699`) | 4: fps limit, game lang, operation mode, assume focus | Game page |
+| `tab_sound` (`menu.cpp:709`) | 2: volume, audio channels | Sound page |
+| `tab_controls` (`menu.cpp:829`) | 15 rows + 24 bind rows (`binds_rows`: 15 buttons, 4 move, 4 camera, shake) + reset | Controls page (binds + capture native) |
+| `tab_amiibo` (`amiibo_page.cpp:129`) | a two-pane directory browser + tag details (not option rows) | Amiibo page: dir row + open-folder action; the browser stays F1 |
+| `tab_menu` (`menu.cpp:869`) | 2: menu lang, discord rpc | Menu page |
+| `tab_advanced` (`menu.cpp:930`) | ~37 across six groups (sched, shaders, texmem, fixes, vulkan, diag) incl. three action buttons | Advanced page, group by group |
+| `tab_mods` (`menu.cpp:1070`) | builtin group (fps/res jump buttons, realtime, cloth realtime, highfps fix, quickmenu) + one row per installed mod + rebuild / open folder | Advanced page: static options + action rows + per-mod rows up to the budget |
+| `cheats_tab.cpp` | one toggle row per cheat + rebuild | Advanced page: per-cheat rows up to the budget |
+
+**Design**
+
+- **Views**: `NPAGES` grows to 8 - view 0 is the home (the seven category rows only, no game tail), views 1..7 a
+  category's items then the game's entries. A plain open lands on view 0 (`g_page` reset in `rt_opt_screen_open`).
+- **Category rows**: new `KIND_ACTION` items (also used by reset / open log / copy info / rebuild / open folder).
+  The rows are built like a choice (`kind` 1) but their decide never cycles: `rt_opt_decide` sees a category or
+  action key, rewrites `c->x[1]` to **0** (the sanctioned sentinel: the dispatcher only compares it against each
+  row's widget - `x20 = x1` at entry, `cmp` in the kind loops - a zero matches no row, so the original dispatch is a
+  no-op), performs its own work (arm a switch to the target page, or run the action) and returns.
+- **Row identity in `rt_opt_decide`**: `x1` is the decided widget; the screen carries its rows at `+0x1a8/+0x1b0`
+  (kind 0), `+0x1c0/+0x1c8` (kind 1), `+0x1e0/+0x1e8` the entry index list. Match the widget against the row arrays,
+  read the row's entry pointer (`row+0x2c` kind 0, `row+0x48` kind 1), map through `entry+0x0` to our option id and
+  `item_by_key` - the same path the store hooks use. If a kind does not yield a row, fall back to no action
+  (log-only), so an unmapped decide never misfires.
+- **Home navigation**: `menu_cursor.c` masks B whenever `g_page != 0` (settings page) and turns the B press into the
+  same one-shot switch the L/R machine runs, with the home as its target; B on the home reaches the game (its own
+  close chain). L/R keep their 3.4 behaviour on settings pages; on the home they are left to the game (the home
+  moves with the d-pad). A category row's decide arms the switch from `rt_opt_decide` itself - data only, the
+  machine still runs on the next `menu_cursor_poll`.
+- **Value model**: `g_our_vals[NITEMS][8]` grows to `MAXVALS 128` so sliders become choices: an item carries its
+  cfg value strings for the accepted values plus an optional display format (`fmt`, e.g. `"%d %%"` for volume) that
+  the message resolver uses for the `10<id>_<vv>` value text. Read/store keep the index⇄cfg-string mapping.
+- **Bind rows + capture**: a `KIND_BIND` item per action; its decide arms a capture state in `menu_cursor.c`'s
+  machine (masks L/R/B and the wheel like the switch does), each `menu_cursor_poll` calls a new
+  `extern "C"` `rt_bind_capture_poll()` that wraps `input_capture` from `binds_page.cpp`; a capture writes through
+  `change()` (new `extern "C"` entry, already the swap-and-`cfg_set` path F1 uses) and the row's value text comes
+  from a `rt_bind_row_text()` wrapper over the existing `key_label` / `pad_label` / `input_map_snapshot`. Esc, B or
+  the 5 s timeout cancel; `write_lines` + `opt_save_soon` persist exactly as today. The stick rows (always stick)
+  and the reset row are plain action/choice rows.
+- **Message hook**: the value resolver gains the bind text path (`fmt` above + `rt_bind_row_text`) and the action
+  rows show an empty value (F1's `action_value` note is optional later). Kind-2 rows (the game's `1000_%02d` button
+  keys) stay untouched: our rows never use kind 2.
+- **Store/read**: unchanged - both store sites (`+0x170210`, `+0x923d20`) already route to `rt_opt_store`, so
+  cycling a slider or toggling on a category page writes through the same `item_by_key` bridge.
+- **Budget**: home = 7 rows (always fits); Controls at ~40 rows is the first over-budget probe (3.7). Ours-first
+  ordering means the game's tail goes invisible before our settings do.
+
+**Stages** (each lands green on its own): (1) item table + views for seven pages behind the existing four-page
+guard, (2) home view + category rows + decide sentinel + B-back-home, (3) sliders/values model + full key coverage,
+(4) bind rows + capture, (5) Advanced page content (static options, action rows, capped mod/cheat lists), (6) smoke
+checklist run (home, every category, B-back, L/R, capture, values persist).
+
+
+
+### Phase 7 — Other versions (after 1.4.3 works)
 
 Repeat Phase 1 address map for 1.2.1 then 1.1.0; add `patches-v121` / `v110` site lines. Runtime stays shared.
 
@@ -613,14 +705,18 @@ Repeat Phase 1 address map for 1.2.1 then 1.1.0; add `patches-v121` / `v110` sit
 | Message hook misses colour tags → mojibake / missing glyphs | Reuse tags from a known-good game string; en first, other languages via existing `ui_text.c` |
 | Release without prove ships a broken installer | `--prove` required in release.yml when extracted inputs present; fail closed otherwise |
 | Secrets never seeded → release not proven | The release builds against the reference layout; `--prove` stays off until the private zip exists |
-| Scope creep (mods/cheats native) | Locked decisions table; reject PRs that move dynamic lists into option rows |
+| Dynamic lists (mods / cheats) past the widget budget | Now in scope by decision (3.5): cap the per-mod / per-cheat rows at what the clone loop draws, keep the full lists on F1, and record the cap in the item table; never let a long list push the settings pages themselves out of view |
+| The clone loop's capacity is unmeasured while the pages grow to full inventory | Over-budget smoke run early (Controls at 40 rows, 3.7): rows past the capacity are invisible, not fatal; reorder or split pages only from what that run shows |
+| Native capture fights the game's own input for the press | Capture runs from `menu_cursor_poll` behind an explicit capture state that masks L/R/B and the wheel like the switch machine does; Esc / B / the 5 s timeout cancel, one log line per capture outcome |
 | The page switch's `rt_call` runs inside the `GetNpadStates` override, a context the game itself never opens screens from | One-shot machine with 500/2500 ms deadlines, one log line per outcome, the old page kept on failure; the first smoke run showed the nearer hazard: the reopen fired while the dying screen still held the manager's slot (ensure-open early-outs, the next open crashed) - the machine now waits for the destructor probe (`rt_opt_closed_gen`) before the call; if corruption recurs anyway, defer the reopen to a patched frame site (one new `site opts` line + `@host` hook) instead |
 | The A-press reopen write field was never identified (`desc+0x1f` bit 6 gate) | The reopen goes through `f_70009db288`, the ensure-open the game's own open runs, rather than a guessed memory write; the B close is the game's own chain |
 
 ## Non-goals
 
 - Local builds, local release packaging, checking in `generated/` or `build/extracted/`.
-- Native pages for Mods / Cheats / Advanced / key-capture lists.
+- Dynamic pickers and browsing UIs that are not option rows: the window-size and GPU picker lists, the mods
+  folder's order UI, the per-mod / per-cheat lists past the widget budget, and the amiibo tag browser - all stay on
+  F1 (their **settings** - dir, order mode, reset, rebuild, open folder - are native on the Advanced / Amiibo pages).
 - Supporting 1.1.0 / 1.2.1 in the first native-options milestone.
 - Changing upstream `valentderah/totk-pc-recomp` (this is a personal fork; upstream PRs optional later).
 
