@@ -57,6 +57,7 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
 | 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | run 1 (0.3.10+8f13ceb) and run 2 done - session 1: version, `menu_cursor`, `SystemOption_00` (20 nodes), open/close and six row decides clean, no L/R pressed; session 2: B close worked, the reopen timed out and the next open crashed in `f_7000863234` (ensure-open mid-teardown) - fixed in 3.6; retest of 3.6 plus the new home/categories/capture checklist pending the background install |
 | 4.3 | Game-menu scrolling: mouse wheel (L/R stay the game's tab keys) | done - `menu_cursor.c` turns the wheel's queued notches (`menu_cursor_wheel`, routed from `menu_win.cpp`/`menu_sdl.cpp` while the F1 menu is closed) into 60 ms d-pad steps with a 40 ms gap, in every non-gameplay focus screen, gated by `TOTK_MENU_CURSOR`; L and R reach the game untouched |
+| 4.4 | Mouse wheel on the D-pad choosers (item ring, weapon / shield / arrow strips) | done - `gameplay_screen()` excluded them (`ShortCutMainItem_00`, `ShortCut_00`) from everything; the wheel now gets its own gate (`wheel_screen()`): those two screens take wheel steps too - vertical on the item ring, horizontal (`B_LEFT`/`B_RIGHT`) on the strips' slide lists - while the pointer and the clicks stay off (`menu` keeps the `!gameplay_screen` condition), so a chooser behaves like gameplay to the mouse except for the wheel; gated by `TOTK_MENU_CURSOR` like the rest |
 | 5.1 | Map cfg keys → native rows; leave F1 for the rest | in progress - scope expanded (3.5): every cfg key of the six tabs, the Advanced page's keys and the bind rows get an item-table row; only the Non-goals remainder (dynamic pickers, browsing lists) stays on F1 |
 | 7.1 | Port hooks to 1.2.1 (optional, after 1.4.3 works) | pending |
 | 0.8 | Green CI on main | done (run 42120809154) |
@@ -601,6 +602,10 @@ file under `runtime/ui/` is picked up without generator changes.
   inventory tabs), so they reach the game as pressed - except on the native Options screen, where they are now the
   page tabs (3.4): masked there only, Q/R on the keyboard, and every other screen keeps them. The wheel does not
   turn pages.
+- The wheel on the D-pad choosers (landed, 4.4): `gameplay_screen()` keeps the pointer and the clicks out of the
+  `ShortCut_00` strip lists (weapon / shield / arrow, horizontal) and the `ShortCutMainItem_00` item ring, but the
+  wheel has its own gate and reaches those two screens: a notch is a 60 ms `B_LEFT`/`B_RIGHT` press on the strips
+  and a `B_UP`/`B_DOWN` press on the ring, same queue and gap as everywhere else.
 - Binding capture: **in scope for native since 2026-11-07** (supersedes the earlier out-of-scope lock). The bind
   rows run the same flow as `runtime/ui/binds_page.cpp`: a decide on a bind row arms a capture (5 s window, Esc/B or
   timeout cancel), `input_capture` polls the devices so any key or pad button lands in the right cell, and

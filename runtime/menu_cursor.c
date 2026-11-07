@@ -239,10 +239,20 @@ static void move_focus(const Focus *f, uint64_t node) {
 }
 
 // Screens with a focus box that are gameplay, not menus: the L ability wheel, the D-pad strips, Autobuild's list, the
-// Purah Pad's camera and the map (the stick moves its own cursor there)
+// Purah Pad's camera and the map (the stick moves its own cursor there). The wheel has its own gate below: it also
+// scrolls the choosers the player asked for (wheel_screen).
 static int gameplay_screen(const char *nm) {
     static const char *const names[] = {"ShortCutMainItem_00", "ShortCut_00", "AutoBuilder_00", "CameraPointer_00",
                                         "AppMap_00"};
+    for (size_t i = 0; i < sizeof names / sizeof *names; i++)
+        if (!strcmp(nm, names[i])) return 1;
+    return 0;
+}
+
+// The D-pad choosers the wheel scrolls while they stay gameplay to the pointer and the clicks: ShortCut_00 is the
+// weapon / shield / arrow strip lists (their slide list moves on the horizontal), ShortCutMainItem_00 the item ring.
+static int wheel_screen(const char *nm) {
+    static const char *const names[] = {"ShortCut_00", "ShortCutMainItem_00"};
     for (size_t i = 0; i < sizeof names / sizeof *names; i++)
         if (!strcmp(nm, names[i])) return 1;
     return 0;
@@ -406,8 +416,10 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
     // With the gamepad as the last device the menus stay as they are on the console: no pointer, the capture kept.
     // Moving the mouse (or a key) makes keyboard and mouse the last device and the pointer comes. Scrolling does not
     // wait for that: the wheel moves the focused list for a gamepad player too.
-    int list = f.screen && !gameplay_screen(nm) && ikb_foreground();
-    int menu = list && input_kbm_last();
+    int game = gameplay_screen(nm);
+    int strips = f.screen && !strcmp(nm, "ShortCut_00");   // the strips move sideways, the ring up and down
+    int list = f.screen && (!game || wheel_screen(nm)) && ikb_foreground();
+    int menu = list && !game && input_kbm_last();
     set_pointer(menu);
     int l = ikb_down(KEY_MOUSE_L), r = ikb_down(KEY_MOUSE_R);
     int click_l = l && !held_l, click_r = r && !held_r;
@@ -416,7 +428,8 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
     // ---- scrolling: the wheel's queued notches become one 60 ms press of a d-pad bit apiece (a notch up scrolls up),
     // carried by the hold below, with STEP_GAP_MS of release between steps: a bit the game sees held across two of its
     // reads would count once for its own key repeat. L and R are not touched: the game turns the inventory's tabs and
-    // the other menu pages with them, so they reach it as the player pressed them.
+    // the other menu pages with them, so they reach it as the player pressed them. The strips of ShortCut_00 move on
+    // the horizontal, so there a notch presses left / right instead of up / down.
     if (!list) {
         __atomic_store_n(&g_wheel_q, 0, __ATOMIC_RELAXED);
         step_q = 0, step_state = STEP_IDLE;
@@ -437,7 +450,8 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
     if (step_state == STEP_IDLE && step_q && now >= hold_until) {
         int up = step_q > 0;
         step_q += up ? -1 : 1;
-        hold_until = now + 60, hold_bit = 1ull << (up ? B_UP : B_DOWN);
+        int bit = strips ? (up ? B_LEFT : B_RIGHT) : (up ? B_UP : B_DOWN);
+        hold_until = now + 60, hold_bit = 1ull << bit;
         step_state = STEP_PRESS, *buttons |= hold_bit;
     }
     if (now < hold_until) {   // a held button, 60 ms so the game sees one press whatever its read rate
