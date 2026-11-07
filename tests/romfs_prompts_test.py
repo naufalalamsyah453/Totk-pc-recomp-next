@@ -324,7 +324,11 @@ class Romfs:
                        'Nt_KeyTexLSt_00': (R8_UNORM, size, rnd.randbytes(IMAGE)),
                        'Nt_KeyTexLSt_01': (R8_UNORM, size, rnd.randbytes(IMAGE))})
         self.text_fonts = [bfotf(cff_font('Text1', LETTERS_1), 0x01020304), bfotf(cff_font('Text2', LETTERS_2), 0x0a0b0c0d)]
-        default = {'scft/External.bfotf': bfotf(cff_font('External', BUTTONS), 0x5a17c3e9), 'fnt/rest.bin': rnd.randbytes(700)}
+        # Built once: FontBuilder stamps the clock on every save, so two builds straddling a second boundary would
+        # hold different bytes (the head timestamps), the tool would draw each separately, and the two archives
+        # would stop holding the same font - which test_other_buttons_are_drawn_as_xbox_icons checks.
+        external = cff_font('External', BUTTONS)
+        default = {'scft/External.bfotf': bfotf(external, 0x5a17c3e9), 'fnt/rest.bin': rnd.randbytes(700)}
         if text_fonts:
             default.update(zip(icons.TEXT_FONTS, self.text_fonts))
         mals = sarc({'LayoutMsg/DoCommand_00.msbt': msbt(MESSAGES), 'LayoutMsg/Other_00.msbt': msbt({'T_A_00': 'A'})})
@@ -337,7 +341,7 @@ class Romfs:
                                'timg/__Combined.bntx': bntx(images)}),
             DEFAULT_FONT: sarc(default),
             # The same font under another key: drawn once, stored under each archive's own key.
-            REGIONAL_FONT: sarc({'scft/External.bfotf': bfotf(cff_font('External', BUTTONS), 0x77777777),
+            REGIONAL_FONT: sarc({'scft/External.bfotf': bfotf(external, 0x77777777),
                                  'fnt/rest.bin': rnd.randbytes(500)}),
             **{path: mals for path in self.mals + [self.old_mals]},
         }
