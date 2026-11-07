@@ -302,10 +302,12 @@ static void log_screen(const Focus *f, const char *nm, int n, float lw, float lh
 
 // The native Options' pages (runtime/ui/game_options.c): while that screen has the focus, L and R are the page
 // tabs and are masked out of the read the game gets; a rising edge switches pages by injecting one B press (the
-// game closes the screen through its own path) and reopening it with rt_call once it is gone - rt_opt_page_commit
-// has moved the page by then, so the rows are rebuilt for it during that creation. The switch runs only on the
-// game thread's pad reads (the poll's c argument) and defers the pointer, wheel and clicks to itself while it is
-// on. Deadlines are milliseconds; every outcome is one log line, and a failed switch leaves the old page.
+// game closes the screen through its own path) and reopening it with rt_call once the teardown has run - the
+// focus can leave before the destructor does, and ensure-open early-outs while the dying screen still fills the
+// manager's slot (the first smoke run's reopen timed out and the next open crashed). rt_opt_page_commit has moved
+// the page by then, so the rows are rebuilt for it during that creation. The switch runs only on the game thread's
+// pad reads (the poll's c argument) and defers the pointer, wheel and clicks to itself while it is on. Deadlines
+// are milliseconds; every outcome is one log line, and a failed switch leaves the old page.
 #define OPT_LAYOUT "SystemOption_00"    // the Options screen's layout name (verified in the smoke run's log)
 #define OPT_ENSURE_OPEN 0x9db288ull     // f_70009db288: ensure-open of this screen, idempotent (main_0114.c:6557)
 #define OPT_CLOSE_MS 500                // injected B to the screen gone
@@ -321,9 +323,10 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
     // thread only, like the click state)
     static int step_q, step_state, wheel_frac;
     static uint64_t step_until;
-    // the native Options' page switch (below): its state and deadline, the page it goes to, and the L/R edge flags
+    // the native Options' page switch (below): its state, deadlines and teardown generation, the page it goes to,
+    // and the L/R edge flags
     static int opt_state, opt_page, opt_prev_l, opt_prev_r;
-    static uint64_t opt_until;
+    static uint64_t opt_until, opt_gen;
     if (!inited) {
         inited = 1;
         main_lo = MOD_MAIN_BASE, main_hi = MOD_MAIN_BASE + MAIN_SIZE;
@@ -354,12 +357,14 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
             if (is_opt && (edge_l || edge_r)) {
                 opt_page = rt_opt_page_arm(edge_r ? 1 : -1);
                 opt_state = OPT_CLOSE_WAIT, opt_until = now + OPT_CLOSE_MS;
+                opt_gen = rt_opt_closed_gen();
                 hold_until = now + 60, hold_bit = 1ull << B_B;   // one B press, carried across the game's reads
             }
         } else if (opt_state == OPT_CLOSE_WAIT) {
-            if (!is_opt) {
+            int torn = rt_opt_closed_gen() != opt_gen;   // the destructor ran: the manager's slot is free again
+            if (!is_opt) hold_until = 0;                 // the game read the B; holding it further would repeat it
+            if (!is_opt && torn) {
                 uint64_t d = rt_opt_desc();
-                hold_until = 0;
                 if (d) {
                     rt_opt_page_commit();
                     rt_call(c, MOD_MAIN_BASE + OPT_ENSURE_OPEN, 1, d);
@@ -369,8 +374,13 @@ void menu_cursor_poll(Cpu *c, uint64_t *buttons) {
                            rt_opt_page_name(opt_page));
                     opt_state = OPT_IDLE;
                 }
+            } else if (is_opt && torn) {
+                rt_log("native options: %s page: the screen came back by itself; the page stays",
+                       rt_opt_page_name(opt_page));
+                opt_state = OPT_IDLE;
             } else if (now >= opt_until) {
-                rt_log("native options: %s page: the screen did not close", rt_opt_page_name(opt_page));
+                rt_log("native options: %s page: the screen %s", rt_opt_page_name(opt_page),
+                       is_opt ? "did not close" : "closed without running its teardown");
                 opt_state = OPT_IDLE;
             }
         } else {   // OPT_OPEN_WAIT: the reopened screen back with the focus box

@@ -238,6 +238,7 @@ static int g_page;                 // the page the rows are built for
 static int g_next;                 // the page an armed switch goes to
 static int g_reopen;               // a switch's reopen is being created: keep g_page
 static uint64_t g_opt_desc;        // the screen's descriptor, captured when the screen is created
+static uint64_t g_closed_gen;      // bumped by every teardown; a page switch's reopen waits for it
 
 static int enabled(void) { return cfg_bool("TOTK_NATIVE_OPTIONS"); }
 
@@ -371,7 +372,11 @@ void rt_opt_screen_open(Cpu *c) {
 }
 
 // The screen's destructor body (main+0x218ba60): who tears the Options screen down on B or when its owner closes.
+// The generation counts past teardowns for the page switch: ensure-open early-outs while the dying screen still
+// fills the manager's slot and only sets the descriptor's bits, which leaves the manager inconsistent (the first
+// smoke run's reopen timed out and the next open crashed), so the reopen may start only after this ran.
 void rt_opt_screen_close(Cpu *c) {
+    g_closed_gen++;
     if (!enabled()) return;
     log_callers("screen destroyed", c);
 }
@@ -379,12 +384,13 @@ void rt_opt_screen_close(Cpu *c) {
 // ---- the page switch (menu_cursor.c drives it on the game thread's pad reads)
 // ready: the tabs may run at all (the feature is on, on the version it is patched for). arm takes the target page
 // from dir (-1/+1, wrapped) and returns it; commit moves the built-for page there and marks the next creation as
-// a switch's reopen; desc is the descriptor the reopen calls ensure-open with (0 before the first open); name is
-// the page's tab text for the switch log.
+// a switch's reopen; desc is the descriptor the reopen calls ensure-open with (0 before the first open); closed-gen
+// is the teardown counter the reopen waits on (see rt_opt_screen_close); name is the page's tab text for the log.
 int rt_opt_ready(void) { return RT_V143 && enabled(); }
 int rt_opt_page_arm(int dir) { return g_next = (g_page + (dir < 0 ? -1 : 1) + NPAGES) % NPAGES; }
 void rt_opt_page_commit(void) { g_page = g_next; g_reopen = 1; }
 uint64_t rt_opt_desc(void) { return g_opt_desc; }
+uint64_t rt_opt_closed_gen(void) { return g_closed_gen; }
 const char *rt_opt_page_name(int p) {
     static const int ids[NPAGES] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND, UI_MENU_TAB_CONTROLS};
     return menu_text((UiTextId)ids[(unsigned)p < NPAGES ? p : 0]);
