@@ -21,6 +21,7 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | Repo | Personal fork `naufalalamsyah453/Totk-pc-recomp-next`, based on upstream `valentderah/totk-pc-recomp` main. |
 | Build location | **GitHub Actions only** — no local compile, lift or release packaging. |
 | Releases | Tag `v*` → automatic Windows `TotK-Setup-…-windows.zip` on GitHub Releases. |
+| Page switch (native Options) | Close = one injected B into the buttons word (the game's own close chain), reopen = `rt_call(f_70009db288)` on the descriptor captured at screen creation - the sanctioned `rt_call` fallback, because the A-press reopen write field was not identified in RE. L/R (Q/R) masked only on layout `SystemOption_00`; pages wrap at both ends. |
 | Plan language | English (AGENTS.md). |
 
 ## Status
@@ -37,9 +38,10 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 | 1.1 | RE: find TotK 1.4.3 Options screen + option table | done (see "Phase 1 findings") |
 | 1.2 | RE: row build / read / store / reset / decide / msg lookup sites | done (back/close virtual + widget budget = Phase 2 verify) |
 | 2.1 | Generator: host-call patch sites (`recomp/patches.py` / `gen.py`) | done (see "Phase 2"; `back` site + widget budget still open) |
-| 3.1 | Runtime: `runtime/ui/game_options.c` (items, cfg read/store bridge, table swap) | done (gated off by `NATIVE_OPTIONS`; page navigation + messages still open) |
+| 3.1 | Runtime: `runtime/ui/game_options.c` (items, cfg read/store bridge, table swap) | done (gated off by `NATIVE_OPTIONS`; page navigation landed as 3.4, in-game confirmation of messages still open) |
 | 3.2 | UTF-16 message injection + `ui_text.c` coverage | hook written, not yet run in game: key parser, text resolver and `rt_opt_msg_lookup` at `+0xb3e3c0` (contract in "Message apply path"); open assumption is that the text is NUL-terminated UTF-16 with the length in char16 units - the smoke test (4.2) confirms it |
 | 3.3 | Restart tag on the native row titles (`[restart]`) | done - `opt_text_utf8` appends `UI_MENU_RESTART_TAG` for the `!live` keys (HDR, ANISO, OPERATION_MODE, AUDIO_CHANNELS); en, ru, pt-BR and zh-Hans texts added |
+| 3.4 | Page navigation: four curated pages, L/R switch by close + reopen | code landed, smoke pending - per-page views precomputed in `install()` behind a boundary guard, `g_page` reset on a plain open and kept through a switch's reopen, the one-shot machine in `menu_cursor.c` (inject B -> wait closed -> commit page -> `rt_call(f_70009db288)` -> wait open, 500/2500 ms fail-soft deadlines, one log line per outcome), L/R masked only on `SystemOption_00`; the page-name title (A5) is the follow-up from the new `title key` log |
 | 4.1 | Input: gamepad + mouse→A/B on native rows | pending |
 | 4.2 | In-game smoke on 1.4.3 (via CI artifact or issue checklist) | pending |
 | 4.3 | Game-menu scrolling: mouse wheel (L/R stay the game's tab keys) | done - `menu_cursor.c` turns the wheel's queued notches (`menu_cursor_wheel`, routed from `menu_win.cpp`/`menu_sdl.cpp` while the F1 menu is closed) into 60 ms d-pad steps with a 40 ms gap, in every non-gameplay focus screen, gated by `TOTK_MENU_CURSOR`; L and R reach the game untouched |
@@ -393,6 +395,41 @@ index}` pairs), runs its handler and stores a result code at screen `+0x210`: th
 back press, and closes it) on the pause System page and the title menu - needed for page changes; exact eui
 input dispatcher that calls slot45/49 (framework-internal, not required if hooks sit lower).
 
+#### Phase A results - close, reopen and the page switch (lifted C + the smoke run's log)
+
+Method: the lifted C of 1.4.3 (local `generated/v143`, never committed) plus the running game's log
+(`C:\TotkRecomp-dev\logs\totk.log` with `TOTK_NATIVE_OPTIONS=1`) - the log named the layout and captured both
+chains end to end.
+
+- **Identity**: the Options screen's layout name is `SystemOption_00` (27 nodes) - the gate in `menu_cursor.c`
+  that masks L/R and arms a switch. The screen's descriptor is the static object at `main+0x3a82d68` (base
+  `0x7003a82000 + 0xd68`), seen as `x0` at the factory hook; `rt_opt_screen_open` captures it (range-checked)
+  instead of hardcoding it. The screen instance is `x0` at decide (`17a7eb040` in the log).
+- **Open cascade** (log lines 280/315): `f_70001bb410` - the per-frame gate on `obj+0x1f` bit 6 (set: early
+  return; clear: `obj+0x18` bits 0/1/3 cleared, bit 5 set, then the vtable+0x30 dispatch, which for slot6 is
+  `f_7002b09278`) -> `f_7002b09278` (main_0350.c, epilogue preserves `+0x1f` bits 6/7 with `x12 & 0xc0`) ->
+  `f_70010669dc` (main_0158.c) -> `f_70009db288` -> `f_70009db390` -> the factory (`main+0x218d58c`).
+- **`f_70009db288` (main_0114.c:6557) = ensure-open, the reopen target**: x0 is the descriptor; a find-table hit
+  skips the insert, else it locks the singleton (`main+0x3a82e70`, `+0xbf8`), inserts the screen, sets the atomic
+  bitmap at `+0xcd8`/`+0xce0` and runs `f_70009db390`; either way it ends with `desc+0x18 |= 0x80000000`. One
+  argument, idempotent: `rt_call(c, MOD_MAIN_BASE + 0x9db288, 1, rt_opt_desc())`.
+- **Close chain** (log line 302, dtor `lr=0x16888c`): B -> event -> the `f_7000afaa60` dispatcher (main_0125.c;
+  x3==2 decides through `vtable+0x188`, x3==3 calls `vtable+0x168` then sets `*(screen+0x173) = 1`, a candidate
+  close byte, x3==4/5 tail into `vtable+0x178`/`+0x198`) -> `f_7000001920` -> `f_7000c68eb4` (main_0133.c,
+  state gate at `+0x16e`/`+0x16d`) -> `f_7000c68f9c` (nulls the manager slot at the find-context `+0x10` pointer
+  array, state byte `0xff` at `+0x20`, clears the `+0xcd8`/`+0xce0` bitmap) -> the destructor. The close is the
+  game's own path, so one B press injected into the buttons word is enough.
+- **The A-press reopen write field was not found**: `desc+0x1f` bit 6 blocks the cascade (the early return, then
+  `L_70001bc054` writing `+0x18 = (+0x18 & 0x3fff0ffd4) | 0x20`), and the epilogue preserves bits 6/7, but no
+  code that sets or clears the bit after an A press was identified. Empirically a B close leaves no auto-reopen
+  (the next create comes only after a refocus), so the reopen uses the plan's sanctioned `rt_call` fallback from
+  `menu_cursor_poll`. That is legal there: the `GetNpadStates` HOST_OVERRIDEs are C-level on the game thread
+  (`Cpu *c` in hand, threaded through `input_poll`), and `rt_call` (hostfn.c) saves and restores the caller's
+  state.
+- **Decision**: close = a B injection into the merged buttons word, reopen = `rt_call` on the ensure-open, both
+  driven by one one-shot machine (500 ms close / 2500 ms open deadlines, one log line per outcome, the old page
+  kept on failure); `rt_opt_decide` stays log-only; pages = four per-page table views (Phase 3).
+
 ### Phase 2 — Generator host-call hooks
 
 **Implemented (2.1 done).** `recomp/patches.py` accepts two host-call tokens as replacement words and
@@ -459,12 +496,20 @@ Port the structure of `game_options.mm` to C, wiring to existing totk pieces:
   Controls only. The cfg keys per tab are the ones `runtime/ui/menu.cpp` groups under `tab_screen` /
   `tab_game` / `tab_sound` / `tab_controls` (they carry the `TOTK_` prefix in the menu; `cfg.c` stores
   them without it).
-- Pages: main section buttons → section pages; game’s own rows on Controls/Video stay (do not remove them).
-- `g_entries` copy of game table + `g_order` per page; validate count/rows on init (fail soft like SavageWind).
-- **Page mechanism (confirmed)**: no order/rows array in TotK — a page swaps table `+0x8` (host-built
-  ordered entry array) and `+0x0` (its length). `install()` copies the game's entries once, appends
-  ours with synthetic `entry+0x20` keys, and records the pre-swap visible count as the widget budget;
-  `rt_opt_build_rows` writes the current page's array before the original runs.
+- Pages (landed): four curated pages - Screen, Game, Sound, Controls - switched with L/R (or Q/R on the keyboard)
+  on the screen itself; the game's own rows are not removed, they follow every page as the tail of that page's view.
+- `g_swap` copy of the game table + `g_views[4]` per page; validate count/rows and the page boundaries on init
+  (fail soft like SavageWind: a mismatch logs and leaves the screen unswapped).
+- **Page mechanism (landed)**: no order/rows array in TotK - a page swaps table `+0x8` (host-built ordered entry
+  array) and `+0x0` (its length). `install()` copies the game's entries once, appends ours with synthetic
+  `entry+0x20` keys, and precomputes four views (the page's items, then the game's entries);
+  `rt_opt_build_rows` writes the current `g_page`'s view before the original runs. Rows past the layout's last
+  widget instance fail soft (invisible); the budget itself stays unmeasured until the smoke run.
+- **Switch (landed, 3.4)**: `menu_cursor.c` injects one B (the game closes through its own chain), waits for the
+  screen to go, commits the page and reopens with `rt_call` on `f_70009db288` (ensure-open, idempotent, on the
+  descriptor captured in `rt_opt_screen_open`); `g_reopen` keeps the committed page through that creation and a
+  plain open resets to page 0. It runs only on the game thread's pad reads (`Cpu *c` threaded through
+  `input_poll`; host-test callers pass 0 and the tabs stay off). `rt_opt_decide` stays log-only.
 - **Hook bodies key on `c->w[3]`** (`entry+0x20`): `rt_opt_read` looks the cfg key up and writes the
   value to the out buffer at `c->x[1]`; `rt_opt_store` writes `w1` back. Guest memory is read/written
   through `memcpy` from `(const void *)(uintptr_t)addr` exactly as `menu_cursor.c` does (guest base
@@ -513,8 +558,10 @@ file under `runtime/ui/` is picked up without generator changes.
   keys are taken over with the right text and length, game keys (`1001`, `1001_02`, `0001`) and a value past an item's
   last are left to the game with `out` untouched, and with `TOTK_NATIVE_OPTIONS=0` nothing is taken. Open: the UTF-16
   assumption above, and that the caption key `%04d` is built from the option id (and not the row index) - the parser accepts the bare id.
-- Still open after messages: **page navigation** (`rt_opt_decide` + a screen reopen, which would let each
-  section have its own page and stop ours from displacing the game's tail rows).
+- Page navigation landed (3.4; RE evidence in "Phase A results"): each section has its own page and only that
+  page's rows displace the game's tail rows. Still open after messages: the screen's **title (and caption) keys
+  are the game's** (A5) - `rt_opt_msg_lookup` now logs each unseen key looked up from the title call site
+  (`main+0x212c6ac`), and mapping the page name onto that key turns the header into the current page's name.
 
 ### Phase 4 — Input
 
@@ -526,8 +573,9 @@ file under `runtime/ui/` is picked up without generator changes.
   40 ms of release between steps. Runs without `input_kbm_last`, so a gamepad player scrolls too;
   `TOTK_MENU_CURSOR=0` turns it off. L and R are left alone: a first version cleared them in menus and turned them
   into row steps, which broke the inventory's tab switching (the player's requirement is that L/R keep switching the
-  inventory tabs), so they reach the game as pressed. The Options page tabs will take L/R the same way the game's
-  tabs do.
+  inventory tabs), so they reach the game as pressed - except on the native Options screen, where they are now the
+  page tabs (3.4): masked there only, Q/R on the keyboard, and every other screen keeps them. The wheel does not
+  turn pages.
 - Binding capture (Keyboard/Controller pages): **out of scope for native** (stays F1) per locked scope.
 
 ### Phase 5 — cfg ↔ native mapping
@@ -566,6 +614,8 @@ Repeat Phase 1 address map for 1.2.1 then 1.1.0; add `patches-v121` / `v110` sit
 | Release without prove ships a broken installer | `--prove` required in release.yml when extracted inputs present; fail closed otherwise |
 | Secrets never seeded → release not proven | The release builds against the reference layout; `--prove` stays off until the private zip exists |
 | Scope creep (mods/cheats native) | Locked decisions table; reject PRs that move dynamic lists into option rows |
+| The page switch's `rt_call` runs inside the `GetNpadStates` override, a context the game itself never opens screens from | One-shot machine with 500/2500 ms deadlines, one log line per outcome, the old page kept on failure; if the smoke run shows corruption, defer the reopen to a patched frame site (one new `site opts` line + `@host` hook) instead |
+| The A-press reopen write field was never identified (`desc+0x1f` bit 6 gate) | The reopen goes through `f_70009db288`, the ensure-open the game's own open runs, rather than a guessed memory write; the B close is the game's own chain |
 
 ## Non-goals
 

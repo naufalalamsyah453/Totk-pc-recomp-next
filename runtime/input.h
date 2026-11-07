@@ -2,10 +2,14 @@
 #pragma once
 #include <stdint.h>
 
+struct Cpu;   // cpu.h (not included here: the pointer is what these two calls need of it)
+
 // Bits of libnx HidNpadButton (A=0 B=1 X=2 Y=3 StickL=4 StickR=5 L=6 R=7 ZL=8 ZR=9 Plus=10 Minus=11 Left=12 Up=13 Right=14
 // Down=15) and the stick directions (StickLLeft..Down 16-19, StickRLeft..Down 20-23, derived from the sticks).
-// Sticks are -32767..32767, up is +y. TOTK_INPUT=none reports no input. Callable from any thread.
-void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
+// Sticks are -32767..32767, up is +y. TOTK_INPUT=none reports no input. Callable from any thread; c is the game
+// thread's CPU state and may be 0 from a host test, which keeps the native Options page switch (menu_cursor.c)
+// from running on that call.
+void input_poll(struct Cpu *c, uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
 // 1 when keyboard and mouse are the device the player used last, 0 when the gamepad is: what is shown for pointing
 // (menu_cursor.c shows the pointer in the game's menus only for the keyboard and mouse)
 int input_kbm_last(void);
@@ -23,10 +27,11 @@ int input_direct_mouse_selector_active(void);
 // Consume direct mouse counts, including one-shot MOUSE events from an input script. enabled=0 discards scripted
 // counts while leaving the real mouse for menu input. Live counts require cursor capture and foreground focus.
 void input_direct_mouse_sample(int enabled, int32_t *dx, int32_t *dy);
-// menu_cursor.c: the pointer in the game's menus (1.4.3). poll: once per pad read, adds a click's A or B; pointer: a
+// menu_cursor.c: the pointer in the game's menus (1.4.3). poll: once per pad read on the game thread (c = that
+// thread's CPU state, needed for the native Options page switch's reopen call), adds a click's A or B; pointer: a
 // menu has the pointer, so the mouse camera's capture is released; wheel: the mouse wheel's notches (dy in notches,
 // positive up) queued from the window thread for the next poll, where they scroll the focused list like the d-pad.
-void menu_cursor_poll(uint64_t *buttons);
+void menu_cursor_poll(struct Cpu *c, uint64_t *buttons);
 int menu_cursor_pointer(void);
 void menu_cursor_wheel(float dy);
 // The same for host UI (the text entry): never blocked. input_block(1) while a text entry is open: input_poll then

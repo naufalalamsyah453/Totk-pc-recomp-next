@@ -92,7 +92,7 @@ static void npad_states(Cpu *c, uint32_t want) {
     plat_mutex_unlock(&lock);
     if (live) {
         s.attributes = ATTR_CONNECTED;
-        input_poll(&s.buttons, &s.lx, &s.ly, &s.rx, &s.ry);
+        input_poll(c, &s.buttons, &s.lx, &s.ly, &s.rx, &s.ry);
     }
     *out = s;
     ret_x(c, 1);

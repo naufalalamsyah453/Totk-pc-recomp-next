@@ -83,9 +83,9 @@ static uint64_t opt_table(void) {
 //
 // One Item per cfg key. The cfg name carries the "TOTK_" prefix cfg_get/cfg_set expect; vals are the accepted
 // values in the order the row cycles them, and they are the same strings the metas table in runtime/cfg.c lists
-// after "|". The set is curated: tab_screen alone draws about thirty rows in the F1 menu, which cannot fit one
-// page of the game's fixed row widgets (plan Phase 3), so only the high-traffic keys come across here and the
-// rest stay on F1 until the page navigation that can partition them exists.
+// after "|". The set is curated: tab_screen alone draws about thirty rows in the F1 menu, and every native page
+// shares its widget budget with the game's own rows (plan Phase 3), so only the high-traffic keys come across
+// here and the rest stay on F1.
 // Texts come from the menu catalog (ui_text.c), so the rows read in the menu language like the F1 overlay does.
 // vtext[v] is the catalog id of value v's label, or NO_TEXT when the label is the literal vlit[v] (a number).
 #define NO_TEXT (-1)
@@ -189,6 +189,10 @@ static int opt_text_utf8(const char *key, char *out, size_t cap) {
     // or one that is only read at start. On a title that note is a short tag in brackets instead, because the caption
     // only shows while the row has the focus: a player must see at a glance which rows change only after a restart.
     if (k.kind == OPT_MSG_CAPTION) {
+        // The page switch hint rides on every caption: the caption is the only text that shows while a row has
+        // the focus, so it is where a player looks for what else the screen can do.
+        snprintf(out + n, cap - n, "\n\n%s", menu_text(UI_MENU_PAGE_HINT));
+        n = strlen(out);
         const CfgMeta *m = cfg_meta(it->cfg);
         if (cfg_from_env(it->cfg)) snprintf(out + n, cap - n, "\n\n%s %s", menu_text(UI_MENU_SET_BY_ENV), it->cfg);
         else if (m && !m->live) snprintf(out + n, cap - n, "\n\n%s", menu_text(UI_MENU_AFTER_RESTART));
@@ -212,13 +216,28 @@ size_t rt_opt_message_utf16(const char *key, uint16_t *out, size_t cap) {
 // Our rows go first so they land inside the layout's widget budget: build_rows looks up Pa_ToggleBtn_%02d by row
 // index and its null check (cbz) is fail-soft, so rows past the last instance the bgyml defines render invisible
 // rather than crash. Putting ours first means a budget that only fits the game's original rows still shows every
-// one of ours and pushes the tail of the game's out of sight until the page navigation (which gives each its own
-// page) exists.
+// one of ours and pushes the tail of the game's out of sight; with the pages, each view carries one page's items
+// plus the game's entries, so the pressure is per page instead of on one screen with every row.
 #define MAX_ENTRIES 512
 static Ent g_swap[MAX_ENTRIES];
 static uint32_t g_our_vals[NITEMS][8];
-static uint32_t g_swap_n;
 static int g_ready;
+
+// The four pages: a page's items are one contiguous run of items[] (the table groups them by page), and a page's
+// view is that run followed by a copy of the game's own entries, so the game's rows stay under every page. All of
+// this is read and written on the game thread - the build hook and menu_cursor.c's page switch run there - so
+// none of it needs atomics.
+#define NPAGES 4
+static const int page_at[NPAGES + 1] = {0, 7, 9, 10, NITEMS};   // item index where each page starts
+static const char *const page_first[NPAGES] = {
+    "TOTK_FULLSCREEN", "TOTK_ASSUME_FOCUS", "TOTK_AUDIO_CHANNELS", "TOTK_MOTION",
+};   // the first item of each page; install checks the boundaries against these
+static Ent g_views[NPAGES][MAX_ENTRIES];
+static uint32_t g_vc[NPAGES];      // a page's view length
+static int g_page;                 // the page the rows are built for
+static int g_next;                 // the page an armed switch goes to
+static int g_reopen;               // a switch's reopen is being created: keep g_page
+static uint64_t g_opt_desc;        // the screen's descriptor, captured when the screen is created
 
 static int enabled(void) { return cfg_bool("TOTK_NATIVE_OPTIONS"); }
 
@@ -231,12 +250,19 @@ static uint32_t item_default(const Item *it) {
     return 0;
 }
 
-// Fills g_swap with our entries followed by a copy of the game's. Returns 0 (and leaves g_ready clear) when the
-// table is not in a shape to extend, which leaves the screen untouched.
+// Fills g_swap with our entries followed by a copy of the game's, then the four per-page views over them.
+// Returns 0 (and leaves g_ready clear) when the table is not in a shape to extend, or the page boundaries no
+// longer match the items above, which leaves the screen untouched.
 static int install(uint64_t table) {
     uint32_t gn = rd32(table + TBL_COUNT);
     uint64_t ge = rd64(table + TBL_ENTRIES);
     if (!ge || !gn || gn + (uint32_t)NITEMS > MAX_ENTRIES) return 0;
+    if (page_at[0] != 0 || page_at[NPAGES] != NITEMS) return 0;
+    for (int p = 0; p < NPAGES; p++)
+        if (page_at[p] >= page_at[p + 1] || strcmp(items[page_at[p]].cfg, page_first[p])) {
+            rt_log("native options: the page boundaries do not match the items; the rows stay unswapped");
+            return 0;
+        }
     for (int i = 0; i < NITEMS; i++) {
         const Item *it = &items[i];
         Ent *e = &g_swap[i];
@@ -253,7 +279,12 @@ static int install(uint64_t table) {
         e->cond = 0;   // always shown: count() counts it without the predicate
     }
     memcpy(g_swap + NITEMS, (const void *)(uintptr_t)ge, (size_t)gn * sizeof(Ent));
-    g_swap_n = gn + (uint32_t)NITEMS;
+    for (int p = 0; p < NPAGES; p++) {
+        uint32_t n = 0;
+        for (int i = page_at[p]; i < page_at[p + 1]; i++) g_views[p][n++] = g_swap[i];
+        memcpy(g_views[p] + n, g_swap + NITEMS, (size_t)gn * sizeof(Ent));
+        g_vc[p] = n + gn;
+    }
     g_ready = 1;
     return 1;
 }
@@ -279,17 +310,18 @@ static void log_callers(const char *what, Cpu *c) {
            (unsigned long long)(c->x[30] - base), chain);
 }
 
-// The screen building its rows (slot84): present our array before the original reads the table, so it allocates
-// and wires rows for whatever count is installed. Runs every build; install only ever captures the game's own
-// entries, which is the state before the first swap.
+// The screen building its rows (slot84): present the current page's view before the original reads the table, so
+// it allocates and wires rows for whatever count is installed. Runs every build; install only ever captures the
+// game's own entries, which is the state before the first swap.
 void rt_opt_build_rows(Cpu *c) {
     (void)c;
     if (!enabled()) return;
     uint64_t table = opt_table();
     if (!table) return;
     if (!g_ready && !install(table)) return;
-    wr64(table + TBL_ENTRIES, (uint64_t)(uintptr_t)g_swap);
-    wr32(table + TBL_COUNT, g_swap_n);
+    int p = (unsigned)g_page < NPAGES ? g_page : 0;
+    wr64(table + TBL_ENTRIES, (uint64_t)(uintptr_t)g_views[p]);
+    wr32(table + TBL_COUNT, g_vc[p]);
 }
 
 // The generic value read: when w3 is one of our keys, answer with the current value's index instead of letting
@@ -325,17 +357,37 @@ int rt_opt_store(Cpu *c) {
     return 1;
 }
 
-// The screen opening: no side effect yet - the page state and the reopen-on-page-change path land with the
-// decide hook (plan Phase 3).
+// The screen opening (the factory's entry, main+0x218d58c): x0 is the screen's descriptor - the static object at
+// main+0x3a82d68, range-checked and remembered, because the page switch reopens with rt_call on it
+// (menu_cursor.c). A plain open starts on the first page; a page switch's reopen has committed its page before
+// the call and marked it with g_reopen, so only that one keeps it.
 void rt_opt_screen_open(Cpu *c) {
     if (!enabled()) return;
     log_callers("screen created", c);
+    uint64_t x0 = c->x[0];
+    if (x0 >= 0x10000 && x0 < (1ull << 47)) g_opt_desc = x0;
+    if (g_reopen) g_reopen = 0;
+    else g_page = 0;
 }
 
 // The screen's destructor body (main+0x218ba60): who tears the Options screen down on B or when its owner closes.
 void rt_opt_screen_close(Cpu *c) {
     if (!enabled()) return;
     log_callers("screen destroyed", c);
+}
+
+// ---- the page switch (menu_cursor.c drives it on the game thread's pad reads)
+// ready: the tabs may run at all (the feature is on, on the version it is patched for). arm takes the target page
+// from dir (-1/+1, wrapped) and returns it; commit moves the built-for page there and marks the next creation as
+// a switch's reopen; desc is the descriptor the reopen calls ensure-open with (0 before the first open); name is
+// the page's tab text for the switch log.
+int rt_opt_ready(void) { return RT_V143 && enabled(); }
+int rt_opt_page_arm(int dir) { return g_next = (g_page + (dir < 0 ? -1 : 1) + NPAGES) % NPAGES; }
+void rt_opt_page_commit(void) { g_page = g_next; g_reopen = 1; }
+uint64_t rt_opt_desc(void) { return g_opt_desc; }
+const char *rt_opt_page_name(int p) {
+    static const int ids[NPAGES] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND, UI_MENU_TAB_CONTROLS};
+    return menu_text((UiTextId)ids[(unsigned)p < NPAGES ? p : 0]);
 }
 
 // Row population (main+0x218c5c0, slot 88): runs once per opening, after the rows exist and before their texts are
@@ -345,10 +397,10 @@ void rt_opt_tick(Cpu *c) {
     (void)c;
 }
 
-// The decide dispatcher (slot49): section buttons and page changes need this, but they need a screen rebuild to
-// go with them (SavageWind closes and reopens the screen on a page change), so it stays a no-op until then. With
-// it empty the injected rows still toggle and cycle through the game's own kind-0/kind-1 handlers, which reach
-// rt_opt_store above.
+// The decide dispatcher (slot49): log-only. The page switch does not come through it (menu_cursor.c closes and
+// reopens the screen instead, which rebuilt the rows for the committed page), and with the hook this empty the
+// injected rows still toggle and cycle through the game's own kind-0/kind-1 handlers, which reach rt_opt_store
+// above.
 void rt_opt_decide(Cpu *c) {
     if (!enabled()) return;
     rt_log("native options: decide, screen=%llx lr=main+0x%llx", (unsigned long long)c->x[0],
@@ -393,6 +445,22 @@ static int msg_slot(const OptMsgKey *k) {
     }
 }
 
+// A key that is not ours, looked up from the screen's title call site (main+0x212c6ac): that is the screen's own
+// header text, which a page switch would want to be the page's name. Its key is still the game's, so log each
+// unseen one - at most 16, once each, because the title is looked up again every frame - and the smoke run
+// collects it for mapping the page names onto it (plan "Phase 3", the A5 follow-up).
+static void log_title_key(const char *key, uint64_t lr) {
+    if (lr < 0x212c600ull || lr > 0x212c7ffull) return;
+    static char seen[16][32];
+    static int nseen;
+    for (int i = 0; i < nseen; i++)
+        if (!strcmp(seen[i], key)) return;
+    if (nseen >= 16) return;
+    snprintf(seen[nseen], sizeof seen[0], "%s", key);
+    nseen++;
+    rt_log("native options: title key %s", key);
+}
+
 int rt_opt_msg_lookup(Cpu *c) {
     if (!enabled()) return 0;
     uint64_t out = c->x[1], keyobj = c->x[3];
@@ -412,7 +480,10 @@ int rt_opt_msg_lookup(Cpu *c) {
     key[n] = 0;
 
     OptMsgKey k;
-    if (!opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS, &k)) return 0;
+    if (!opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS, &k)) {
+        log_title_key(key, c->x[30] - MOD_MAIN_BASE);
+        return 0;
+    }
     int slot = msg_slot(&k);
     if (slot < 0 || slot >= MSG_SLOTS) return 0;
 

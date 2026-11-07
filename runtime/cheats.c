@@ -632,7 +632,7 @@ void cheats_frame(uint64_t frame) {
     if (!g_vm || frame < 60) return;   // the game polls its input (and starts SDL) before this
     uint64_t keys = 0;
     int32_t lx, ly, rx, ry;
-    input_poll(&keys, &lx, &ly, &rx, &ry);   // 0 while the menu is open
+    input_poll(NULL, &keys, &lx, &ly, &rx, &ry);   // 0 while the menu is open
     for (int i = 0; i < g_n; i++) {
         Cheat *c = &g_cheats[i];
         switch (c->info.kind) {
