@@ -94,6 +94,9 @@ static void set_open(int open) { change_open(open); }
 static int g_failed_flag();
 extern "C" int menu_is_open(void) { return g_open.load(std::memory_order_relaxed); }
 extern "C" void menu_toggle(void) {
+    // With the native Options on, the settings live in the game's own screen: F1, Esc and Minus+Plus no longer open this
+    // menu. One already open can still be closed (the key is live, so it may have been switched on while it was open).
+    if (!g_open.load() && cfg_bool("TOTK_NATIVE_OPTIONS")) return;
     if (!g_failed_flag()) change_open(-1);
 }
 

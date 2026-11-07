@@ -1,7 +1,8 @@
 // The core settings inside TotK's own Options screen, the way SavageWindRecomp puts them in BOTW's
-// (refs/SavageWindRecomp runtime/ui/game_options.mm), but on ONE page: a row per setting, grouped by a header row per
-// section (Screen, Graphics, Sound, Controls, Game), with the game's own rows after them. There is no page switch: the
-// screen is built once per opening, which is all the machinery a single list needs. The plan and the confirmed 1.4.3
+// (refs/SavageWindRecomp runtime/ui/game_options.mm), but on ONE page: a row per setting in groups (Screen, Graphics,
+// Shadows, DLSS, Colour profile, HDR, Sound, Controls, Mouse, Movement, Game), with the game's own rows after them. The
+// game draws its ornament separator between groups; a group is marked in the entry (see GROUP_BASE). There is no page
+// switch: the screen is built once per opening, which is all the machinery a single list needs. The plan and the confirmed 1.4.3
 // addresses live in docs/native-options-plan.md: the option table sits behind the singleton at
 // main+0x3a82e70 -> +0x5e8, an entry is 0x28 bytes, and read/store receive the entry's +0x20 value key in w3.
 // recomp/patches-v143.txt calls the rt_opt_* below at the entry of the lifted functions (Phase 2); this file is
@@ -99,7 +100,7 @@ typedef struct {
     const char *const *vals;
     int nvals;
     int kind;                 // 0 = toggle row, 1 = choice row
-    int sect;                 // the section the row sits under (SECT_*)
+    int sect;                 // the group the row sits in (SECT_*): the game draws a separator between two groups
     int title, desc;          // catalog ids: the row title and the caption shown while it is focused
     const int *vtext;         // per value: a catalog id or NO_TEXT; NULL: no catalog labels
     const char *const *vlit;  // per value: a literal label or NULL; NULL: none
@@ -108,9 +109,8 @@ typedef struct {
     const char *fallback;     // cfg key whose value counts while this one is unset
 } Item;
 
-enum { SECT_SCREEN, SECT_GRAPHICS, SECT_SOUND, SECT_CONTROLS, SECT_GAME, NSECT };
-static const int sect_title[NSECT] = {UI_MENU_TAB_SCREEN, UI_MENU_SECT_GRAPHICS, UI_MENU_TAB_SOUND, UI_MENU_TAB_CONTROLS,
-                                      UI_MENU_TAB_GAME};
+enum { SECT_SCREEN, SECT_GRAPHICS, SECT_SHADOWS, SECT_DLSS, SECT_COLOR, SECT_HDR, SECT_SOUND, SECT_CONTROLS, SECT_MOUSE,
+       SECT_MOVE, SECT_GAME, NSECT };
 
 static const char *const v_onoff[] = {"0", "1"};
 static const int t_onoff[] = {UI_MENU_OFF, UI_MENU_ON};
@@ -219,26 +219,26 @@ static Item items[] = {
     STEPS("TOTK_SHARPNESS", SECT_GRAPHICS, v_pct10, " %", UI_MENU_SHARPNESS, UI_MENU_SHARPNESS_DESC),
     TOGGLE("TOTK_FXAA", SECT_GRAPHICS, UI_MENU_FXAA, UI_MENU_FXAA_DESC),
     {"TOTK_ANISO", v_aniso, N(v_aniso), 1, SECT_GRAPHICS, UI_MENU_ANISO, UI_MENU_ANISO_DESC, t_aniso, l_aniso, NULL, 0, NULL},
-    {"TOTK_SHADOW_RES", v_sres, N(v_sres), 1, SECT_GRAPHICS, UI_MENU_SHADOW_RES, UI_MENU_SHADOW_RES_DESC, t_sres, NULL, "", 0,
+    {"TOTK_SHADOW_RES", v_sres, N(v_sres), 1, SECT_SHADOWS, UI_MENU_SHADOW_RES, UI_MENU_SHADOW_RES_DESC, t_sres, NULL, "", 0,
      NULL},
-    LABELS("TOTK_SHADOW_SCALE", SECT_GRAPHICS, v_sscale, l_sscale, UI_MENU_SHADOW_SCALE, UI_MENU_SHADOW_SCALE_DESC),
-    LABELS("TOTK_SHADOW_RANGE", SECT_GRAPHICS, v_srange, l_srange, UI_MENU_SHADOW_RANGE, UI_MENU_SHADOW_RANGE_DESC),
-    STEPS("TOTK_PCSS", SECT_GRAPHICS, v_pcss, " %", UI_MENU_PCSS, UI_MENU_PCSS_DESC),
-    STEPS("TOTK_CONTACT_SHADOWS", SECT_GRAPHICS, v_pct10, " %", UI_MENU_CONTACT_SHADOWS, UI_MENU_CONTACT_SHADOWS_DESC),
-    TOGGLE("TOTK_DLAA", SECT_GRAPHICS, UI_MENU_DLAA, UI_MENU_DLAA_DESC),
-    CATALOG("TOTK_DLSS", SECT_GRAPHICS, v_dlss, t_dlss, UI_MENU_DLSS, UI_MENU_DLSS_DESC),
-    CATALOG("TOTK_DLSS_PRESET", SECT_GRAPHICS, v_dlsspreset, t_dlsspreset, UI_MENU_DLSS_PRESET, UI_MENU_DLSS_PRESET_DESC),
-    CATALOG("TOTK_DLSS_CHAR_MASK", SECT_GRAPHICS, v_dlsschars, t_dlsschars, UI_MENU_DLSS_CHARS, UI_MENU_DLSS_CHARS_DESC),
-    CATALOG("TOTK_COLOR_PRESET", SECT_GRAPHICS, v_cpreset, t_cpreset, UI_MENU_COLOR_PRESET, UI_MENU_COLOR_PRESET_DESC),
-    STEPS("TOTK_COLOR_BRIGHTNESS", SECT_GRAPHICS, v_bright, " %", UI_MENU_COLOR_BRIGHTNESS, UI_MENU_COLOR_BRIGHTNESS_DESC),
-    STEPS("TOTK_COLOR_CONTRAST", SECT_GRAPHICS, v_contrast, " %", UI_MENU_COLOR_CONTRAST, UI_MENU_COLOR_CONTRAST_DESC),
-    STEPS("TOTK_COLOR_SATURATION", SECT_GRAPHICS, v_satur, " %", UI_MENU_COLOR_SATURATION, UI_MENU_COLOR_SATURATION_DESC),
-    STEPS("TOTK_COLOR_GAMMA", SECT_GRAPHICS, v_gamma, "", UI_MENU_COLOR_GAMMA, UI_MENU_COLOR_GAMMA_DESC),
-    TOGGLE("TOTK_HDR", SECT_GRAPHICS, UI_MENU_HDR, UI_MENU_HDR_DESC),
-    STEPS("TOTK_HDR_PEAK_NITS", SECT_GRAPHICS, v_peak, " nits", UI_MENU_HDR_PEAK, UI_MENU_HDR_PEAK_DESC),
-    STEPS("TOTK_HDR_GAME_NITS", SECT_GRAPHICS, v_nits, " nits", UI_MENU_HDR_GAME, UI_MENU_HDR_GAME_DESC),
-    STEPS("TOTK_HDR_UI_NITS", SECT_GRAPHICS, v_nits, " nits", UI_MENU_HDR_UI, UI_MENU_HDR_UI_DESC),
-    STEPS("TOTK_HDR_HUE", SECT_GRAPHICS, v_pct10, " %", UI_MENU_HDR_HUE, UI_MENU_HDR_HUE_DESC),
+    LABELS("TOTK_SHADOW_SCALE", SECT_SHADOWS, v_sscale, l_sscale, UI_MENU_SHADOW_SCALE, UI_MENU_SHADOW_SCALE_DESC),
+    LABELS("TOTK_SHADOW_RANGE", SECT_SHADOWS, v_srange, l_srange, UI_MENU_SHADOW_RANGE, UI_MENU_SHADOW_RANGE_DESC),
+    STEPS("TOTK_PCSS", SECT_SHADOWS, v_pcss, " %", UI_MENU_PCSS, UI_MENU_PCSS_DESC),
+    STEPS("TOTK_CONTACT_SHADOWS", SECT_SHADOWS, v_pct10, " %", UI_MENU_CONTACT_SHADOWS, UI_MENU_CONTACT_SHADOWS_DESC),
+    TOGGLE("TOTK_DLAA", SECT_DLSS, UI_MENU_DLAA, UI_MENU_DLAA_DESC),
+    CATALOG("TOTK_DLSS", SECT_DLSS, v_dlss, t_dlss, UI_MENU_DLSS, UI_MENU_DLSS_DESC),
+    CATALOG("TOTK_DLSS_PRESET", SECT_DLSS, v_dlsspreset, t_dlsspreset, UI_MENU_DLSS_PRESET, UI_MENU_DLSS_PRESET_DESC),
+    CATALOG("TOTK_DLSS_CHAR_MASK", SECT_DLSS, v_dlsschars, t_dlsschars, UI_MENU_DLSS_CHARS, UI_MENU_DLSS_CHARS_DESC),
+    CATALOG("TOTK_COLOR_PRESET", SECT_COLOR, v_cpreset, t_cpreset, UI_MENU_COLOR_PRESET, UI_MENU_COLOR_PRESET_DESC),
+    STEPS("TOTK_COLOR_BRIGHTNESS", SECT_COLOR, v_bright, " %", UI_MENU_COLOR_BRIGHTNESS, UI_MENU_COLOR_BRIGHTNESS_DESC),
+    STEPS("TOTK_COLOR_CONTRAST", SECT_COLOR, v_contrast, " %", UI_MENU_COLOR_CONTRAST, UI_MENU_COLOR_CONTRAST_DESC),
+    STEPS("TOTK_COLOR_SATURATION", SECT_COLOR, v_satur, " %", UI_MENU_COLOR_SATURATION, UI_MENU_COLOR_SATURATION_DESC),
+    STEPS("TOTK_COLOR_GAMMA", SECT_COLOR, v_gamma, "", UI_MENU_COLOR_GAMMA, UI_MENU_COLOR_GAMMA_DESC),
+    TOGGLE("TOTK_HDR", SECT_HDR, UI_MENU_HDR, UI_MENU_HDR_DESC),
+    STEPS("TOTK_HDR_PEAK_NITS", SECT_HDR, v_peak, " nits", UI_MENU_HDR_PEAK, UI_MENU_HDR_PEAK_DESC),
+    STEPS("TOTK_HDR_GAME_NITS", SECT_HDR, v_nits, " nits", UI_MENU_HDR_GAME, UI_MENU_HDR_GAME_DESC),
+    STEPS("TOTK_HDR_UI_NITS", SECT_HDR, v_nits, " nits", UI_MENU_HDR_UI, UI_MENU_HDR_UI_DESC),
+    STEPS("TOTK_HDR_HUE", SECT_HDR, v_pct10, " %", UI_MENU_HDR_HUE, UI_MENU_HDR_HUE_DESC),
     // Sound
     STEPS("TOTK_VOLUME", SECT_SOUND, v_volume, " %", UI_MENU_VOLUME, UI_MENU_VOLUME_DESC),
     CATALOG("TOTK_AUDIO_CHANNELS", SECT_SOUND, v_channels, t_channels, UI_MENU_AUDIO_CHANNELS, UI_MENU_AUDIO_CHANNELS_DESC),
@@ -249,17 +249,17 @@ static Item items[] = {
     STEPS("TOTK_RUMBLE_STRENGTH", SECT_CONTROLS, v_rstr, " %", UI_MENU_RUMBLE_STRENGTH, UI_MENU_RUMBLE_STRENGTH_DESC),
     STEPS("TOTK_RUMBLE_CURVE", SECT_CONTROLS, v_rcurve, "", UI_MENU_RUMBLE_CURVE, UI_MENU_RUMBLE_CURVE_DESC),
     TOGGLE("TOTK_RUMBLE_TRIGGERS", SECT_CONTROLS, UI_MENU_RUMBLE_TRIGGERS, UI_MENU_RUMBLE_TRIGGERS_DESC),
-    CATALOG("TOTK_MOUSE_MODE", SECT_CONTROLS, v_mouse, t_mouse, UI_MENU_MOUSE_MODE, UI_MENU_MOUSE_MODE_DESC),
-    STEPS("TOTK_MOUSE_SENS", SECT_CONTROLS, v_msens, "", UI_MENU_MOUSE_SENS, UI_MENU_MOUSE_SENS_DESC),
-    TOGGLE("TOTK_MENU_CURSOR", SECT_CONTROLS, UI_MENU_MENU_CURSOR, UI_MENU_MENU_CURSOR_DESC),
-    {"TOTK_WALK_KEY", v_walkkey, N(v_walkkey), 1, SECT_CONTROLS, UI_MENU_WALK_KEY, UI_MENU_WALK_KEY_DESC, t_walkkey, l_walkkey,
+    CATALOG("TOTK_MOUSE_MODE", SECT_MOUSE, v_mouse, t_mouse, UI_MENU_MOUSE_MODE, UI_MENU_MOUSE_MODE_DESC),
+    STEPS("TOTK_MOUSE_SENS", SECT_MOUSE, v_msens, "", UI_MENU_MOUSE_SENS, UI_MENU_MOUSE_SENS_DESC),
+    TOGGLE("TOTK_MENU_CURSOR", SECT_MOUSE, UI_MENU_MENU_CURSOR, UI_MENU_MENU_CURSOR_DESC),
+    {"TOTK_WALK_KEY", v_walkkey, N(v_walkkey), 1, SECT_MOVE, UI_MENU_WALK_KEY, UI_MENU_WALK_KEY_DESC, t_walkkey, l_walkkey,
      NULL, 0, NULL},
-    STEPS("TOTK_WALK_SCALE", SECT_CONTROLS, v_wscale, "", UI_MENU_WALK_SCALE, UI_MENU_WALK_SCALE_DESC),
-    {"TOTK_LSTICK_DEADZONE", v_dead, N(v_dead), 1, SECT_CONTROLS, UI_MENU_LSTICK_DEADZONE, UI_MENU_STICK_DEADZONE_DESC, NULL,
+    STEPS("TOTK_WALK_SCALE", SECT_MOVE, v_wscale, "", UI_MENU_WALK_SCALE, UI_MENU_WALK_SCALE_DESC),
+    {"TOTK_LSTICK_DEADZONE", v_dead, N(v_dead), 1, SECT_MOVE, UI_MENU_LSTICK_DEADZONE, UI_MENU_STICK_DEADZONE_DESC, NULL,
      NULL, " %", 1, "TOTK_STICK_DEADZONE"},
-    {"TOTK_RSTICK_DEADZONE", v_dead, N(v_dead), 1, SECT_CONTROLS, UI_MENU_RSTICK_DEADZONE, UI_MENU_STICK_DEADZONE_DESC, NULL,
+    {"TOTK_RSTICK_DEADZONE", v_dead, N(v_dead), 1, SECT_MOVE, UI_MENU_RSTICK_DEADZONE, UI_MENU_STICK_DEADZONE_DESC, NULL,
      NULL, " %", 1, "TOTK_STICK_DEADZONE"},
-    STEPS("TOTK_STICK_SENS", SECT_CONTROLS, v_ssens, "", UI_MENU_STICK_SENS, UI_MENU_STICK_SENS_DESC),
+    STEPS("TOTK_STICK_SENS", SECT_MOVE, v_ssens, "", UI_MENU_STICK_SENS, UI_MENU_STICK_SENS_DESC),
     // Game (the F1 Game and Menu tabs)
     {"TOTK_LANG", g_lang_vals, 1, 1, SECT_GAME, UI_MENU_GAME_LANG, UI_MENU_GAME_LANG_DESC, NULL, g_lang_names, NULL, 0, NULL},
     CATALOG("TOTK_OPERATION_MODE", SECT_GAME, v_mode, t_mode, UI_MENU_OPERATION_MODE, UI_MENU_OPERATION_MODE_DESC),
@@ -271,7 +271,7 @@ enum { NITEMS = (int)(sizeof items / sizeof items[0]) };
 
 // Our option ids and value keys are handed out from ranges the game does not use, so entry-by-id and the read/
 // store dispatch never mistake one of ours for a game entry. The value key is what read/store see in w3; the id
-// is what entry-by-id and the "10%02d" message key use. The section header rows follow the items in both ranges.
+// is what entry-by-id and the "10%02d" message key use.
 #define ITEM_ID_BASE 0x8000u
 #define ITEM_KEY_BASE 0x4e000000u
 static uint32_t item_id(int i) { return ITEM_ID_BASE + (uint32_t)i; }
@@ -282,11 +282,10 @@ static int item_by_key(uint32_t key) {
     return -1;
 }
 
-// A section header is a toggle row that is only a label: its value reads as off and a press changes nothing.
-#define SECT_KEY_BASE (ITEM_KEY_BASE + 0x100u)
-static uint32_t sect_id(int s) { return ITEM_ID_BASE + (uint32_t)NITEMS + (uint32_t)s; }
-static uint32_t sect_key(int s) { return SECT_KEY_BASE + (uint32_t)s; }
-static int sect_by_key(uint32_t key) { return key >= SECT_KEY_BASE && key < SECT_KEY_BASE + NSECT ? (int)(key - SECT_KEY_BASE) : -1; }
+// The group of a row goes in the entry's +0xc field, the one that is not yet identified: a number far above any the game
+// uses, so the first row after our last group differs from it too. The install logs the game's own values of +0xc and
+// +0x14 to check that this is the field the separators follow.
+#define GROUP_BASE 0x100u
 
 // ---- the texts of our rows
 //
@@ -307,14 +306,7 @@ static const char *value_label(const Item *it, int v, char *buf, size_t cap) {
 
 static int opt_text_utf8(const char *key, char *out, size_t cap) {
     OptMsgKey k;
-    if (!cap || !opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS + NSECT, &k)) return 0;
-    if (k.id >= ITEM_ID_BASE + (uint32_t)NITEMS) {   // a section header: only its title has a text
-        if (k.kind != OPT_MSG_TITLE) return 0;
-        const char *name = menu_text((UiTextId)sect_title[k.id - ITEM_ID_BASE - (uint32_t)NITEMS]);
-        if (!name || !*name) return 0;
-        snprintf(out, cap, "\xe2\x80\x94 %s \xe2\x80\x94", name);   // em dashes around the name
-        return 1;
-    }
+    if (!cap || !opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS, &k)) return 0;
     const Item *it = &items[k.id - ITEM_ID_BASE];
     const char *text = NULL;
     char lit[64];
@@ -386,6 +378,7 @@ static uint32_t item_default(const Item *it) {
 
 // The index of the value in effect: the key's, or its fallback's while the key is unset.
 static uint32_t item_index(const Item *it) {
+    if (it->vals == v_onoff) return cfg_bool(it->cfg) ? 1u : 0u;   // like the F1 row: any value but "0" is on
     const char *cur = cfg_value(it->cfg);
     if (!*cur && it->fallback) cur = cfg_value(it->fallback);
     int at = index_of(it, cur);
@@ -397,14 +390,13 @@ static uint32_t item_index(const Item *it) {
 // Our rows go first so they land inside the layout's widget budget: build_rows looks up Pa_ToggleBtn_%02d by row
 // index and its null check (cbz) is fail-soft, so rows past the last instance the bgyml defines render invisible
 // rather than crash. Putting ours first means a budget that only fits the game's original rows still shows every
-// one of ours and pushes the tail of the game's out of sight. The view is one list: a header row per section, its
-// items, then a copy of the game's own entries. It is built once and written on every build.
+// one of ours and pushes the tail of the game's out of sight. The view is one list: our items in their groups, then a
+// copy of the game's own entries. It is built once and written on every build.
 #define MAX_ENTRIES 512
 #define MSG_MAXV 24   // the most values an item can have: the message slots and the value-id arrays are sized by it
 static Ent g_rows[MAX_ENTRIES];
 static uint32_t g_rows_n;
 static uint32_t g_our_vals[NITEMS][MSG_MAXV];
-static uint32_t g_sect_vals[2] = {0, 1};
 static int g_ready;
 
 static int enabled(void) { return cfg_bool("TOTK_NATIVE_OPTIONS"); }
@@ -424,12 +416,12 @@ static void fill_languages(void) {
         if (!strcmp(items[i].cfg, "TOTK_LANG")) items[i].nvals = n + 1;
 }
 
-// Fills g_rows with the sections' rows followed by a copy of the game's. Returns 0 (and leaves g_ready clear) when
+// Fills g_rows with our rows followed by a copy of the game's. Returns 0 (and leaves g_ready clear) when
 // the table is not in a shape to extend or an item does not fit its limits, which leaves the screen untouched.
 static int install(uint64_t table) {
     uint32_t gn = rd32(table + TBL_COUNT);
     uint64_t ge = rd64(table + TBL_ENTRIES);
-    if (!ge || !gn || gn + (uint32_t)NITEMS + NSECT > MAX_ENTRIES) return 0;
+    if (!ge || !gn || gn + (uint32_t)NITEMS > MAX_ENTRIES) return 0;
     fill_languages();
     for (int i = 0; i < NITEMS; i++)
         if (items[i].nvals < 1 || items[i].nvals > MSG_MAXV || items[i].sect < 0 || items[i].sect >= NSECT ||
@@ -439,31 +431,27 @@ static int install(uint64_t table) {
             return 0;
         }
     uint32_t n = 0;
-    for (int s = 0; s < NSECT; s++) {
-        Ent *h = &g_rows[n++];
-        memset(h, 0, sizeof *h);
-        h->id = sect_id(s);
-        h->kind = 0;
-        h->nvals = 2;
-        h->vals = (uint64_t)(uintptr_t)g_sect_vals;
-        h->key = sect_key(s);
-        for (int i = 0; i < NITEMS; i++) {
-            if (items[i].sect != s) continue;
-            const Item *it = &items[i];
-            Ent *e = &g_rows[n++];
-            memset(e, 0, sizeof *e);
-            e->id = item_id(i);
-            e->kind = (uint32_t)it->kind;
-            e->def = item_default(it);
-            e->nvals = (uint32_t)it->nvals;
-            // The value ids are 0..n-1, so an id and the row's value index are the same number: store's w1 and our
-            // read's out are both that index, and mapping it back to a cfg string is a table lookup.
-            for (int v = 0; v < it->nvals; v++) g_our_vals[i][v] = (uint32_t)v;
-            e->vals = (uint64_t)(uintptr_t)g_our_vals[i];
-            e->key = item_key(i);
-            e->cond = 0;   // always shown: count() counts it without the predicate
-        }
+    for (int i = 0; i < NITEMS; i++) {
+        const Item *it = &items[i];
+        Ent *e = &g_rows[n++];
+        memset(e, 0, sizeof *e);
+        e->id = item_id(i);
+        e->kind = (uint32_t)it->kind;
+        e->def = item_default(it);
+        e->pad0 = GROUP_BASE + (uint32_t)it->sect;
+        e->nvals = (uint32_t)it->nvals;
+        // The value ids are 0..n-1, so an id and the row's value index are the same number: store's w1 and our
+        // read's out are both that index, and mapping it back to a cfg string is a table lookup.
+        for (int v = 0; v < it->nvals; v++) g_our_vals[i][v] = (uint32_t)v;
+        e->vals = (uint64_t)(uintptr_t)g_our_vals[i];
+        e->key = item_key(i);
+        e->cond = 0;   // always shown: count() counts it without the predicate
     }
+    // The game's own entries, one line each: which of them draw a separator is in the fields we do not know yet.
+    const Ent *game = (const Ent *)(uintptr_t)ge;
+    for (uint32_t k = 0; k < gn; k++)
+        rt_log("native options: game entry %u: id=%u kind=%u def=%u +0xc=%x nvals=%u +0x14=%x key=%x cond=%x", k, game[k].id,
+               game[k].kind, game[k].def, game[k].pad0, game[k].nvals, game[k].pad1, game[k].key, game[k].cond);
     memcpy(g_rows + n, (const void *)(uintptr_t)ge, (size_t)gn * sizeof(Ent));
     g_rows_n = n + gn;
     g_ready = 1;
@@ -489,11 +477,6 @@ void rt_opt_build_rows(Cpu *c) {
 // the game look the option up. out (c->x[1]) is where the caller expects a u32.
 int rt_opt_read(Cpu *c) {
     if (!enabled()) return 0;
-    if (sect_by_key((uint32_t)c->x[3]) >= 0) {   // a section header: always "off"
-        wr32((uint64_t)c->x[1], 0);
-        c->x[0] = 1;
-        return 1;
-    }
     int i = item_by_key((uint32_t)c->x[3]);
     if (i < 0) return 0;
     wr32((uint64_t)c->x[1], item_index(&items[i]));
@@ -523,10 +506,6 @@ static void color_follow(const Item *it, const char *value) {
 // unset, as the F1 rows do.
 int rt_opt_store(Cpu *c) {
     if (!enabled()) return 0;
-    if (sect_by_key((uint32_t)c->x[3]) >= 0) {   // a press on a section header changes nothing
-        c->x[0] = 1;
-        return 1;
-    }
     int i = item_by_key((uint32_t)c->x[3]);
     if (i < 0) return 0;
     const Item *it = &items[i];
@@ -579,10 +558,10 @@ void rt_opt_decide(Cpu *c) { (void)c; }
 // call, so a language change shows up the next time the screen builds its rows.
 
 #define MSG_UNITS 512
-enum { MSG_SLOTS = (NITEMS + NSECT) * (2 + MSG_MAXV) };
+enum { MSG_SLOTS = NITEMS * (2 + MSG_MAXV) };
 static uint16_t g_msg[MSG_SLOTS][MSG_UNITS];
 
-// Slot of a parsed key: title and caption of each row first, then its values. A section header takes the title slot.
+// Slot of a parsed key: title and caption of each row first, then its values.
 static int msg_slot(const OptMsgKey *k) {
     int i = (int)(k->id - ITEM_ID_BASE);
     switch (k->kind) {
@@ -614,7 +593,7 @@ int rt_opt_msg_lookup(Cpu *c) {
     key[n] = 0;
 
     OptMsgKey k;
-    if (!opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS + NSECT, &k)) return 0;
+    if (!opt_msgkey_parse(key, ITEM_ID_BASE, ITEM_ID_BASE + (uint32_t)NITEMS, &k)) return 0;
     int slot = msg_slot(&k);
     if (slot < 0 || slot >= MSG_SLOTS) return 0;
 

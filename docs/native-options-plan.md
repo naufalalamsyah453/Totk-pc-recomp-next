@@ -7,8 +7,9 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 
 1. Move the settings out of the Dear ImGui F1 overlay into the game's own Options screen (pause → System →
    Options), the way SavageWindRecomp does with `runtime/ui/game_options.mm`. **One page** (decided 2026-11-07, later
-   that day): a header row per section (Screen, Graphics, Sound, Controls, Game), the section's settings under it, then
-   the game's own rows. No home of categories, no page switch, no L/R tabs.
+   that day): the settings in groups (Screen, Graphics, Shadows, DLSS, Colour profile, HDR, Sound, Controls, Mouse,
+   Movement, Game) with the game's ornament separator between two groups, then the game's own rows. No header rows,
+   no home of categories, no page switch, no L/R tabs.
 2. **All F1 settings come across natively except** the Advanced, Mods and Cheats tabs, the key bind tables and
    their capture, the amiibo browser and the GPU picker, which stay on F1 (see the "Single page" section for why).
    Sliders become choices over a short list of steps.
@@ -35,16 +36,23 @@ Update the checkboxes whenever a step lands; do not delete completed rows.
 ## Single page (2026-11-07, current design)
 
 The native Options screen is **one list**. `runtime/ui/game_options.c` builds it once per opening in `rt_opt_build_rows`:
-for each section a header row, then the section's items, then a copy of the game's own entries. Why this and not pages:
+our items in their groups, then a copy of the game's own entries. Why this and not pages:
 a page change is a close and a reopen of a screen that is built once per opening, which needed a teardown generation,
 a wait for the manager's slot, a descriptor captured at creation and a pad-read state machine in `menu_cursor.c`. A page
 was also a place for the widget budget to bite per page. A single list needs none of that and the game's own scrolling,
 B and L/R keep working.
 
-- **Rows**: 53 items in 5 sections (Screen 9, Graphics 23, Sound 2, Controls 14, Game 5), `Item` table in
-  `game_options.c`. A header is a toggle row that reads off and ignores a press; its title is the section name between
-  em dashes (`UI_MENU_TAB_SCREEN`, `UI_MENU_SECT_GRAPHICS`, `UI_MENU_TAB_SOUND`, `UI_MENU_TAB_CONTROLS`,
-  `UI_MENU_TAB_GAME`).
+- **Rows**: 53 items in 11 groups (Screen 9, Graphics 4, Shadows 5, DLSS 4, Colour profile 5, HDR 5, Sound 2,
+  Controls 6, Mouse 3, Movement 5, Game 5), `Item` table in `game_options.c`. There are no header rows: a group is
+  marked by a number in the entry's `+0xc` field (`GROUP_BASE` + the group), which is the working guess for what the
+  game's ornament separator follows. It is **unverified**: the install logs every game entry's `+0xc` and `+0x14`
+  (`native options: game entry ...`), and if the separators do not show, those lines say which field or kind the game
+  uses.
+- **Toggles** read like the F1 row: any stored value but `0` is on (`cfg_bool`), so a hand-edited `true` or `2` in
+  totk.ini shows on instead of falling back to the default.
+- **F1**: with `native_options = 1` F1, Esc and Minus+Plus no longer open the Dear ImGui menu (`menu_toggle`); one
+  that is already open can still close. F10 (the performance overlay) is unchanged. The Advanced, Mods, Cheats, binds
+  and amiibo tabs are therefore out of reach while the key is on.
 - **Sliders**: a row cycles values, so an F1 slider is a choice over a short list of steps that includes the key's
   default (`v_*` arrays). A `num` item reads as the step nearest to the stored number, so a value typed into totk.ini
   still shows and the next press moves off it. Up to `MSG_MAXV` (24) values per item.
